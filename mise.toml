@@ -1,2 +1,13 @@
 [tools]
 go = "latest"
+rust = "latest"
+
+[tools."github:firecracker-microvm/firecracker"]
+version = "1.18.0"
+asset_pattern = "firecracker-v1.18.0-x86_64.tgz"
+strip_components = 1
+checksum = "sha256:1ac8eec866dd5eea14efecf6323e22b23eea24054545338a5b34bc5bca6623cd"
+
+[tools."github:firecracker-microvm/firecracker".rename_exe]
+"firecracker-v1.18.0-x86_64" = "firecracker"
+"jailer-v1.18.0-x86_64" = "jailer"

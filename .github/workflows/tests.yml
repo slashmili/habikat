@@ -1,0 +1,81 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CGO_ENABLED: "1"
+  GOTOOLCHAIN: local
+
+jobs:
+  tests:
+    name: Unit, race, and fuzz tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Unit and race tests
+        run: go test -race -shuffle=on -count=1 -timeout=2m ./...
+
+      - name: Fuzz tests
+        run: make fuzz-cli fuzz-vm
+
+  e2e:
+    name: Real VM tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Install VM dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y e2fsprogs openssh-client
+
+      - name: Enable KVM access
+        run: |
+          if [ ! -c /dev/kvm ]; then
+            echo "::error::This job requires a Linux runner with KVM."
+            exit 1
+          fi
+          sudo chown "$(id -u):$(id -g)" /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+
+      - name: Build VM image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HK_IMAGE_DIR: ${{ runner.temp }}/habikato-image
+        run: python3 images/build.py "$HK_IMAGE_DIR" "$RUNNER_TEMP/habikato-downloads"
+
+      - name: End-to-end tests
+        env:
+          HK_IMAGE_DIR: ${{ runner.temp }}/habikato-image
+        run: make e2e

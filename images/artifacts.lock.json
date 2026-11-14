@@ -1,0 +1,73 @@
+[
+  {
+    "file": "firecracker-v1.18.0-x86_64.tgz",
+    "repository": "firecracker-microvm/firecracker",
+    "tag": "v1.18.0",
+    "sha256": "1ac8eec866dd5eea14efecf6323e22b23eea24054545338a5b34bc5bca6623cd"
+  },
+  {
+    "file": "busybox-1.37.0-r30.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/busybox-1.37.0-r30.apk",
+    "sha256": "2fea8c73710994099eaec6832b69a0f70163e0d6ee13848af3a5270a16d15c5c"
+  },
+  {
+    "file": "libcrypto3-3.5.9-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/libcrypto3-3.5.9-r0.apk",
+    "sha256": "9c82c86f051f3372445ecdbae5068ccc39dbc423ba8f779eaa84549fef1cfc77"
+  },
+  {
+    "file": "libncursesw-6.5_p20251123-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/libncursesw-6.5_p20251123-r0.apk",
+    "sha256": "233f20a6d64d87afbc4b03ad3e7508f5d56af747508c395ba7a6c5f1033b15f0"
+  },
+  {
+    "file": "libssl3-3.5.9-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/libssl3-3.5.9-r0.apk",
+    "sha256": "b5ad11f5955b3b7ddfd8c32e8c1fdd79878d208bb4dfa9bbd8f35ddc59187242"
+  },
+  {
+    "file": "musl-1.2.5-r24.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/musl-1.2.5-r24.apk",
+    "sha256": "d49d703392f1a6d2fe822db1b57e61735063077e1ad846d5f40d79fe507ec727"
+  },
+  {
+    "file": "ncurses-terminfo-base-6.5_p20251123-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/ncurses-terminfo-base-6.5_p20251123-r0.apk",
+    "sha256": "9392f4d87fd9446c7c35dd1a29abe8e3566174e03bd75c848028e46829403f1f"
+  },
+  {
+    "file": "openssh-keygen-10.2_p1-r1.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/openssh-keygen-10.2_p1-r1.apk",
+    "sha256": "29fd67ada00a625eb64609477ae9f635161d419dfb8ee6ecdff1062a17b5da94"
+  },
+  {
+    "file": "openssh-server-10.2_p1-r1.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/openssh-server-10.2_p1-r1.apk",
+    "sha256": "1ba20b5206db507877b9b59bedbf4d56d46b7fa195b71a978e47e33ceaad169a"
+  },
+  {
+    "file": "openssh-server-common-10.2_p1-r1.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/openssh-server-common-10.2_p1-r1.apk",
+    "sha256": "febcc0b8b3d14bd3189f0b8fd3d554d71732215b45b223a8a753ab50f3251a2f"
+  },
+  {
+    "file": "readline-8.3.1-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/readline-8.3.1-r0.apk",
+    "sha256": "6d29b98eafff4aebaed4e61fca8329fbf7b26489a29fefc1d4462610d687303b"
+  },
+  {
+    "file": "socat-1.8.1.3-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/socat-1.8.1.3-r0.apk",
+    "sha256": "13ddf9de2e58cbb3ffa5454160f7b98d7f92a6571feffa644566437f5a17fe59"
+  },
+  {
+    "file": "zlib-1.4-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/zlib-1.4-r0.apk",
+    "sha256": "22ff5ae6b704ac1786d6565dcb3f5dde489e44a5038297a565382b76f656ee08"
+  },
+  {
+    "file": "vmlinux",
+    "url": "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/20261111-778a26c0594c-0/x86_64/vmlinux-6.1.188",
+    "sha256": "f5735774e2570d9df451fc5665f3525d3baf723fa6a8a413a03591d5742b39a5"
+  }
+]
