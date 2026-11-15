@@ -8,7 +8,7 @@ import (
 	"io"
 	"time"
 
-	"habikato.local/habikato/internal/vm"
+	"github.com/slashmili/habikato/internal/vm"
 )
 
 type createOptions struct {

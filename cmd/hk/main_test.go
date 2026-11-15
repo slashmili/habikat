@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"habikato.local/habikato/internal/vm"
+	"github.com/slashmili/habikato/internal/vm"
 	"io"
 	"strings"
 	"testing"

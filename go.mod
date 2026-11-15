@@ -1,4 +1,4 @@
-module habikato.local/habikato
+module github.com/slashmili/habikato
 
 go 1.27.4
 

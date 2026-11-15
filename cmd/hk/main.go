@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"habikato.local/habikato/internal/vm"
+	"github.com/slashmili/habikato/internal/vm"
 )
 
 const usage = "usage: hk create --name NAME | hk attach NAME | hk delete [--force] NAME"

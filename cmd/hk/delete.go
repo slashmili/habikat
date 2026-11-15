@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/slashmili/habikato/internal/vm"
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
-	"habikato.local/habikato/internal/vm"
 )
 
 var errDeleteCancelled = errors.New("deletion cancelled")

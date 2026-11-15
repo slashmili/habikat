@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/slashmili/habikato/internal/repository"
 	"golang.org/x/sys/unix"
-	"habikato.local/habikato/internal/repository"
 )
 
 func imageDir() (string, error) {

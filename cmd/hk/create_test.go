@@ -11,7 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"habikato.local/habikato/internal/vm"
+	"github.com/slashmili/habikato/internal/vm"
 )
 
 var createArgCases = []struct {

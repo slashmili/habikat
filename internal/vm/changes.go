@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"habikato.local/habikato/internal/git"
+	"github.com/slashmili/habikato/internal/git"
 )
 
 func guestHasChanges(ctx context.Context, dir string, state record) (bool, error) {

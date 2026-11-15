@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"habikato.local/habikato/internal/vm"
+	"github.com/slashmili/habikato/internal/vm"
 )
 
 var nameArgCases = []struct {

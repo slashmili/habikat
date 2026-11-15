@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"habikato.local/habikato/internal/git"
-	"habikato.local/habikato/internal/repository"
+	"github.com/slashmili/habikato/internal/git"
+	"github.com/slashmili/habikato/internal/repository"
 )
 
 const receiveBundle = `set -eu

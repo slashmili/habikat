@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"habikato.local/habikato/internal/git"
+	"github.com/slashmili/habikato/internal/git"
 )
 
 func gitTest(t *testing.T, dir string, args ...string) string {
