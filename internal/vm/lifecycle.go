@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+	"habikato.local/habikato/internal/repository"
 )
 
 func imageDir() (string, error) {
@@ -61,7 +62,28 @@ func verifyImages(dir string) error {
 	return nil
 }
 
-func Create(ctx context.Context, name string) (result error) {
+func Create(ctx context.Context, name string) (project *Project, result error) {
+	if err := ValidateName(name); err != nil {
+		return nil, err
+	}
+	snapshot, err := repository.Capture(ctx, ".")
+	if err != nil {
+		return nil, err
+	}
+	if snapshot != nil {
+		defer func() { result = errors.Join(result, snapshot.Close()) }()
+	}
+	err = create(ctx, name, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot != nil {
+		return &Project{Branch: snapshot.Branch, Commit: snapshot.Commit, Workspace: Workspace}, nil
+	}
+	return nil, nil
+}
+
+func create(ctx context.Context, name string, snapshot *repository.Snapshot) (result error) {
 	if err := ValidateName(name); err != nil {
 		return err
 	}
@@ -164,6 +186,15 @@ func Create(ctx context.Context, name string) (result error) {
 			return errors.Join(fmt.Errorf("Firecracker exited before SSH was ready:\n%s", logData), logErr)
 		}
 		if last = checkSSH(ctx, dir); last == nil {
+			if snapshot != nil {
+				if err := importProject(ctx, dir, snapshot); err != nil {
+					return fmt.Errorf("import project (check available guest disk space): %w", err)
+				}
+				state.Project = &Project{Branch: snapshot.Branch, Commit: snapshot.Commit, Workspace: Workspace}
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			state.Ready = true
 			return saveRecord(dir, state)
 		}
@@ -280,16 +311,24 @@ func stopUnrecordedProcesses(dir string, entries []os.DirEntry) error {
 	return nil
 }
 
-func Delete(ctx context.Context, name string) error {
-	return deleteState(ctx, name, stopProcess)
+func Delete(ctx context.Context, name string, confirm func() error) error {
+	return deleteConfirmed(ctx, name, confirm, guestHasChanges, stopProcess)
 }
 
-func deleteState(ctx context.Context, name string, stop func(record, string) error) (result error) {
+func deleteState(ctx context.Context, name string, stop func(record, string) error) error {
+	return deleteConfirmed(ctx, name, nil, guestHasChanges, stop)
+}
+
+func deleteConfirmed(ctx context.Context, name string, confirm func() error, inspect func(context.Context, string, record) (bool, error), stop func(record, string) error) (result error) {
 	dir, lock, err := lockState(ctx, name)
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, lock.Close()) }()
+	defer func() {
+		if lock != nil {
+			result = errors.Join(result, lock.Close())
+		}
+	}()
 	state, err := readRecord(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -299,8 +338,61 @@ func deleteState(ctx context.Context, name string, stop func(record, string) err
 		}
 		return err
 	}
+	if confirm != nil {
+		changed, err := inspect(ctx, dir, state)
+		if err != nil {
+			return fmt.Errorf("cannot check VM %s for changes; use hk delete --force %s to discard its files and commits: %w", name, name, err)
+		}
+		if !changed {
+			confirm = nil
+		}
+	}
+	if confirm != nil {
+		pinnedDirectory, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		defer pinnedDirectory.Close()
+		original, err := pinnedDirectory.Stat()
+		if err != nil {
+			return err
+		}
+		if err := lock.Close(); err != nil {
+			return err
+		}
+		lock = nil
+		if err := confirm(); err != nil {
+			return err
+		}
+		_, lock, err = lockState(ctx, name)
+		if err != nil {
+			return err
+		}
+		state, err = readUnchangedVM(dir, original, state)
+		if err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := stop(state, dir); err != nil {
 		return err
 	}
 	return os.RemoveAll(dir)
+}
+
+func readUnchangedVM(dir string, original os.FileInfo, state record) (record, error) {
+	current, err := os.Lstat(dir)
+	if err != nil || !os.SameFile(original, current) {
+		return record{}, errors.New("VM was replaced while awaiting confirmation; deletion aborted")
+	}
+	next, err := readRecord(dir)
+	if err != nil {
+		return record{}, err
+	}
+	if next.PID != state.PID || next.StartTime != state.StartTime {
+		return record{}, errors.New("VM instance changed while awaiting confirmation; deletion aborted")
+	}
+	return next, nil
 }

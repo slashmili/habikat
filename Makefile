@@ -1,4 +1,4 @@
-.PHONY: build image test test-cli fuzz-cli test-vm fuzz-vm property e2e
+.PHONY: build image test test-cli fuzz-cli test-vm fuzz-vm fuzz-import integration test-image property e2e
 
 build:
 	go build -o bin/hk ./cmd/hk
@@ -15,6 +15,7 @@ test-cli:
 fuzz-cli:
 	go test ./cmd/hk -run '^$$' -fuzz '^FuzzCreateArgs$$' -fuzztime=10s -parallel=2
 	go test ./cmd/hk -run '^$$' -fuzz '^FuzzNameArg$$' -fuzztime=10s -parallel=2
+	go test ./cmd/hk -run '^$$' -fuzz '^FuzzDeleteApproval$$' -fuzztime=10s -parallel=2
 
 test-vm:
 	go test -race ./internal/vm
@@ -27,5 +28,14 @@ fuzz-vm: property
 property:
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzNameConfinement$$' -fuzztime=10s -parallel=2
 
+integration:
+	go test -race -tags=integration ./internal/repository ./internal/vm -v -count=1
+
+test-image:
+	python3 -m unittest discover -s images -p 'test_*.py' -v
+
+fuzz-import:
+	go test ./internal/vm -run '^$$' -fuzz '^FuzzImportBoundary$$' -fuzztime=10s -parallel=2
+
 e2e:
-	go test -race -tags=e2e ./tests/e2e -v -count=1 -timeout=5m
+	go test -race -tags=e2e ./tests/e2e -v -count=1 -timeout=10m

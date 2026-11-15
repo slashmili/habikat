@@ -72,8 +72,9 @@ func FuzzNameArg(f *testing.F) {
 		deleteErr := runDelete(
 			t.Context(),
 			args,
+			strings.NewReader(""),
 			&out,
-			func(_ context.Context, got string) error {
+			func(_ context.Context, got string, _ func() error) error {
 				deletes++
 				if got != name {
 					t.Fatalf("delete name = %q, want %q", got, name)

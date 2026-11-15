@@ -8,11 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+var validCommit = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
 var validName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
@@ -23,10 +26,19 @@ func ValidateName(name string) error {
 	return nil
 }
 
+const Workspace = "/home/hk/workspace"
+
+type Project struct {
+	Branch    string `json:"branch"`
+	Commit    string `json:"commit"`
+	Workspace string `json:"workspace"`
+}
+
 type record struct {
-	PID       int    `json:"pid"`
-	StartTime string `json:"start_time"`
-	Ready     bool   `json:"ready"`
+	Project   *Project `json:"project,omitempty"`
+	PID       int      `json:"pid"`
+	StartTime string   `json:"start_time"`
+	Ready     bool     `json:"ready"`
 }
 
 func stateHome() (string, error) {
@@ -124,6 +136,12 @@ func readRecord(dir string) (record, error) {
 	}
 	if state.PID < 0 || (state.PID != 0 && state.StartTime == "") || (state.Ready && state.PID == 0) {
 		return record{}, errors.New("invalid VM process identity")
+	}
+	if state.Project != nil {
+		p := state.Project
+		if p.Workspace != Workspace || p.Branch == "" || strings.ContainsAny(p.Branch, "\x00\r\n") || !validCommit.MatchString(p.Commit) {
+			return record{}, errors.New("invalid VM project metadata")
+		}
 	}
 	return *state, nil
 }

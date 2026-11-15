@@ -24,20 +24,28 @@ import (
 type harness struct {
 	t        *testing.T
 	dir, bin string
+	cwd      string
 	env      []string
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	kvm, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("real VM E2E requires read/write /dev/kvm: %v", err)
+	}
+	if err := kvm.Close(); err != nil {
+		t.Fatal(err)
+	}
 	dir, err := os.MkdirTemp("", "hk-e2e-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, dir: dir, bin: filepath.Join(dir, "hk")}
+	h := &harness{t: t, dir: dir, cwd: dir, bin: filepath.Join(dir, "hk")}
 	// Deliberately exercise literal shell-sensitive state paths.
 	state := filepath.Join(dir, "state '$%")
 	h.env = append(os.Environ(), "HK_STATE_DIR="+state)
-	build := exec.Command("go", "build", "-o", h.bin, "../../cmd/hk")
+	build := exec.Command("go", "build", "-tags=e2e", "-o", h.bin, "../../cmd/hk")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
 	}
@@ -48,7 +56,7 @@ func newHarness(t *testing.T) *harness {
 		}
 		for _, entry := range entries {
 			if entry.IsDir() {
-				cmd := h.command("delete", entry.Name())
+				cmd := h.command("delete", "--force", entry.Name())
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Errorf("cleanup %s: %v: %s; retained %s", entry.Name(), err, out, dir)
 					return
@@ -69,6 +77,7 @@ func (h *harness) state(name, file string) string {
 func (h *harness) command(args ...string) *exec.Cmd {
 	cmd := exec.Command(h.bin, args...)
 	cmd.Env = h.env
+	cmd.Dir = h.cwd
 	return cmd
 }
 
@@ -78,6 +87,7 @@ func (h *harness) run(input string, args ...string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, h.bin, args...)
 	cmd.Env = h.env
+	cmd.Dir = h.cwd
 	cmd.Stdin = strings.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -167,7 +177,7 @@ exit
 	if _, err := h.run("exit 37\n", "attach", "one"); exitCode(err) != 37 {
 		t.Fatalf("remote exit code: %v", err)
 	}
-	t.Run("interactive-terminal", func(t *testing.T) { testTerminal(t, h, "one") })
+	t.Run("interactive-terminal", func(t *testing.T) { testTerminal(t, h, "one", "/home/hk") })
 
 	h.must("", "create", "--name", "two")
 	otherIdentity := read(t, h.state("two", "identity"))
@@ -186,12 +196,12 @@ exit
 		t.Fatalf("another VM's client key accepted: %v %s", err, out)
 	}
 	write(t, h.state("one", "identity"), identity)
-	h.must("", "delete", "one")
+	h.must("", "delete", "--force", "one")
 	assertGone(t, pid)
 	if _, err := os.Stat(h.state("one", "")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("delete retained VM keys/disk: %v", err)
 	}
-	h.must("", "delete", "one")
+	h.must("", "delete", "--force", "one")
 	if _, err := h.run("", "attach", "one"); err == nil {
 		t.Fatal("attached a deleted VM")
 	}
@@ -204,7 +214,7 @@ exit
 	// before PID publication. Recovery must find only this VM's config path.
 	pid = vmPID(t, h.state("one", "state.json"))
 	write(t, h.state("one", "state.json"), []byte(`{"pid":0,"start_time":"","ready":false}`))
-	h.must("", "delete", "one")
+	h.must("", "delete", "--force", "one")
 	assertGone(t, pid)
 	h.must("echo STILL_RUNNING\nexit\n", "attach", "two")
 }
@@ -301,7 +311,7 @@ func TestBootFailureCleanup(t *testing.T) {
 	}
 }
 
-func testTerminal(t *testing.T, h *harness, name string) {
+func testTerminal(t *testing.T, h *harness, name, directory string) {
 	t.Helper()
 	fd, err := unix.Open("/dev/ptmx", unix.O_RDWR|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -376,6 +386,8 @@ func testTerminal(t *testing.T, h *harness, name string) {
 			t.Fatal(err)
 		}
 	}
+	send("test \"$PWD\" = " + quote(directory) + " && printf 'DIRECTORY_''OK\\n'\n")
+	await("DIRECTORY_OK")
 	send("stty -echo; test -t 0 && test -t 1 && printf 'PT''Y_READY\\n'; stty size\n")
 	await("PTY_READY")
 	await("24 80")

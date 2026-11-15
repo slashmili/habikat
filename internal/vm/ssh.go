@@ -129,6 +129,9 @@ func Attach(name string) error {
 		args = append(args, "-T")
 	}
 	args = append(args, "hk@habikato")
+	if command := attachCommand(state.Project); command != "" {
+		args = append(args, command)
+	}
 	sshPath, err := exec.LookPath("ssh")
 	if err != nil {
 		return err
@@ -196,4 +199,11 @@ func readUnbufferedLine(reader io.Reader, limit int) ([]byte, error) {
 		}
 	}
 	return line, nil
+}
+
+func attachCommand(project *Project) string {
+	if project == nil {
+		return ""
+	}
+	return `cd /home/hk/workspace || { echo 'hk: project workspace /home/hk/workspace is missing or inaccessible' >&2; exit 1; }; exec /bin/sh`
 }

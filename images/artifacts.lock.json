@@ -3,7 +3,8 @@
     "file": "firecracker-v1.18.0-x86_64.tgz",
     "repository": "firecracker-microvm/firecracker",
     "tag": "v1.18.0",
-    "sha256": "1ac8eec866dd5eea14efecf6323e22b23eea24054545338a5b34bc5bca6623cd"
+    "sha256": "1ac8eec866dd5eea14efecf6323e22b23eea24054545338a5b34bc5bca6623cd",
+    "url": "https://github.com/firecracker-microvm/firecracker/releases/download/v1.18.0/firecracker-v1.18.0-x86_64.tgz"
   },
   {
     "file": "busybox-1.37.0-r30.apk",
@@ -69,5 +70,65 @@
     "file": "vmlinux",
     "url": "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/20261111-778a26c0594c-0/x86_64/vmlinux-6.1.188",
     "sha256": "f5735774e2570d9df451fc5665f3525d3baf723fa6a8a413a03591d5742b39a5"
+  },
+  {
+    "file": "git-2.52.1-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/git-2.52.1-r0.apk",
+    "sha256": "5eb6c37240298b674c5ba5fa36ee7b05e196df9a29740bfb59c5d6bcc9128dbd"
+  },
+  {
+    "file": "pcre2-10.49-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/pcre2-10.49-r0.apk",
+    "sha256": "d8057917531ed5eead1d4ccc8dd3ef630e4d90c0587e9b9feafe56c4f954265f"
+  },
+  {
+    "file": "libcurl-8.23.0-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/libcurl-8.23.0-r0.apk",
+    "sha256": "d35e08ce3bafbcaf1a68512ac31483bd93e795ad5e8d8bfd76ada3106d81b569"
+  },
+  {
+    "file": "libexpat-2.10.0-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/libexpat-2.10.0-r0.apk",
+    "sha256": "3a9ab8d1b66d1b76c6b41d24501ab61057efa3993f7b85cf3ff043b749e06e6e"
+  },
+  {
+    "file": "brotli-libs-1.2.1-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/brotli-libs-1.2.1-r0.apk",
+    "sha256": "cf3dc08928958bb42fe71c07a179ca33adb9e2c341daa29d88777061956d84f5"
+  },
+  {
+    "file": "c-ares-1.34.9-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/c-ares-1.34.9-r0.apk",
+    "sha256": "90a5da68630b32cddbd5e5fd68f0f244f065f812f97fded3252800dbe6c6c85c"
+  },
+  {
+    "file": "libidn2-2.3.8-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/libidn2-2.3.8-r0.apk",
+    "sha256": "526275e11e449b99e5264e0ba32625fa12a78c426de61378f8b5cc0af5fc7014"
+  },
+  {
+    "file": "nghttp2-libs-1.69.0-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/nghttp2-libs-1.69.0-r0.apk",
+    "sha256": "e52a5325b8720449ed4f123a33202794361b6b164c127abdb4b3c057467e7a41"
+  },
+  {
+    "file": "libpsl-0.21.5-r3.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/libpsl-0.21.5-r3.apk",
+    "sha256": "86ada309d460ea8768b340cbf83c7234a1564f8fea9c370fb19f028a2a165891"
+  },
+  {
+    "file": "zstd-libs-1.5.7-r2.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/zstd-libs-1.5.7-r2.apk",
+    "sha256": "d5fcc58f7f071a5658d97b09838668e4443203217631992915b8e60656904104"
+  },
+  {
+    "file": "libunistring-1.4.1-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/libunistring-1.4.1-r0.apk",
+    "sha256": "eca5eb66c8ac64cca7160fb766b15e885f75d18c15d0919d0adee987a53b9473"
+  },
+  {
+    "file": "ca-certificates-bundle-20261020-r0.apk",
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.23/main/x86_64/ca-certificates-bundle-20261020-r0.apk",
+    "sha256": "a4c5de1bf37652cd98cbe71aec209512ae0508a964961957a6c9650f795e46c4"
   }
 ]

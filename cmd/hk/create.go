@@ -15,17 +15,22 @@ type createOptions struct {
 	name string
 }
 
-func runCreate(ctx context.Context, args []string, out io.Writer, createVM func(context.Context, string) error) error {
+func runCreate(ctx context.Context, args []string, out io.Writer, createVM func(context.Context, string) (*vm.Project, error)) error {
 	opts, err := parseCreateArgs(args)
 	if err != nil {
 		return err
 	}
 	ctx, stop := context.WithTimeout(ctx, 90*time.Second)
 	defer stop()
-	if err := createVM(ctx, opts.name); err != nil {
+	project, err := createVM(ctx, opts.name)
+	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(out, "Created %s. Enter with: hk attach %s\n", opts.name, opts.name)
+	if project != nil {
+		_, err = fmt.Fprintf(out, "Created %s with branch %s at %.12s in %s. Enter with: hk attach %s\n", opts.name, project.Branch, project.Commit, project.Workspace, opts.name)
+	} else {
+		_, err = fmt.Fprintf(out, "Created empty VM %s. Enter with: hk attach %s\n", opts.name, opts.name)
+	}
 	return err
 }
 

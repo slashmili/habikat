@@ -55,6 +55,36 @@ func TestRunCreateSuccess(t *testing.T) {
 	}
 }
 
+func TestRunCreateProjectSuccess(t *testing.T) {
+	t.Parallel()
+	project := &vm.Project{
+		Branch:    "feature/new-project",
+		Commit:    "0123456789abcdef0123456789abcdef01234567",
+		Workspace: "/home/hk/workspace",
+	}
+	var out bytes.Buffer
+	calls := 0
+	err := runCreate(
+		t.Context(),
+		[]string{"--name=demo"},
+		&out,
+		func(context.Context, string) (*vm.Project, error) {
+			calls++
+			if out.Len() != 0 {
+				t.Fatal("printed success before project creation finished")
+			}
+			return project, nil
+		},
+	)
+	if err != nil || calls != 1 {
+		t.Fatalf("create error=%v, calls=%d", err, calls)
+	}
+	want := "Created demo with branch feature/new-project at 0123456789ab in /home/hk/workspace. Enter with: hk attach demo\n"
+	if out.String() != want {
+		t.Fatalf("output = %q, want %q", out.String(), want)
+	}
+}
+
 func TestRunCreateFailure(t *testing.T) {
 	t.Parallel()
 	want := errors.New("boot failed")
@@ -64,9 +94,9 @@ func TestRunCreateFailure(t *testing.T) {
 		t.Context(),
 		[]string{"--name=demo"},
 		&out,
-		func(ctx context.Context, _ string) error {
+		func(ctx context.Context, _ string) (*vm.Project, error) {
 			received = ctx
-			return want
+			return nil, want
 		},
 	)
 	if !errors.Is(err, want) || out.Len() != 0 {
@@ -89,9 +119,9 @@ func TestRunCreateInvalidArgs(t *testing.T) {
 				t.Context(),
 				tc.args,
 				&out,
-				func(context.Context, string) error {
+				func(context.Context, string) (*vm.Project, error) {
 					t.Fatal("invalid arguments reached VM creation")
-					return nil
+					return nil, nil
 				},
 			)
 			assertErrorMessage(t, err, tc.wantErr)
@@ -111,7 +141,7 @@ func TestRunCreateCancellation(t *testing.T) {
 		ctx,
 		[]string{"--name=demo"},
 		&out,
-		func(ctx context.Context, _ string) error { return ctx.Err() },
+		func(ctx context.Context, _ string) (*vm.Project, error) { return nil, ctx.Err() },
 	)
 	if !errors.Is(err, context.Canceled) || out.Len() != 0 {
 		t.Fatalf("error=%v, output=%q; want cancellation without success", err, out.String())
@@ -141,13 +171,13 @@ func TestRunCreateDeadline(t *testing.T) {
 					ctx,
 					[]string{"--name=demo"},
 					&out,
-					func(ctx context.Context, _ string) error {
+					func(ctx context.Context, _ string) (*vm.Project, error) {
 						deadline, ok := ctx.Deadline()
 						if !ok || deadline.Sub(start) != tc.want {
 							t.Fatalf("deadline = %v, want %v after start", deadline, tc.want)
 						}
 						<-ctx.Done()
-						return ctx.Err()
+						return nil, ctx.Err()
 					},
 				)
 				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != tc.want || out.Len() != 0 {
@@ -161,14 +191,31 @@ func TestRunCreateDeadline(t *testing.T) {
 func TestRunCreateOutputFailure(t *testing.T) {
 	t.Parallel()
 	want := errors.New("output unavailable")
-	err := runCreate(
-		t.Context(),
-		[]string{"--name=demo"},
-		errorWriter{err: want},
-		func(context.Context, string) error { return nil },
-	)
-	if !errors.Is(err, want) {
-		t.Fatalf("error = %v, want %v", err, want)
+	for _, tc := range []struct {
+		name    string
+		project *vm.Project
+	}{
+		{name: "empty VM"},
+		{
+			name: "project VM",
+			project: &vm.Project{
+				Branch:    "main",
+				Commit:    "0123456789abcdef0123456789abcdef01234567",
+				Workspace: "/home/hk/workspace",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := runCreate(
+				t.Context(),
+				[]string{"--name=demo"},
+				errorWriter{err: want},
+				func(context.Context, string) (*vm.Project, error) { return tc.project, nil },
+			)
+			if !errors.Is(err, want) {
+				t.Fatalf("error = %v, want %v", err, want)
+			}
+		})
 	}
 }
 
@@ -225,9 +272,9 @@ func FuzzCreateArgs(f *testing.F) {
 				t.Context(),
 				args,
 				io.Discard,
-				func(context.Context, string) error {
+				func(context.Context, string) (*vm.Project, error) {
 					t.Fatal("invalid arguments reached VM creation")
-					return nil
+					return nil, nil
 				},
 			)
 			assertErrorMessage(t, handlerErr, err.Error())
@@ -269,7 +316,7 @@ func assertCreateSuccess(t *testing.T, args []string, wantName string) {
 		t.Context(),
 		args,
 		&out,
-		func(ctx context.Context, name string) error {
+		func(ctx context.Context, name string) (*vm.Project, error) {
 			calls++
 			received = ctx
 			if name != wantName {
@@ -281,13 +328,13 @@ func assertCreateSuccess(t *testing.T, args []string, wantName string) {
 			if out.Len() != 0 {
 				t.Fatal("printed success before creation finished")
 			}
-			return nil
+			return nil, nil
 		},
 	)
 	if err != nil || calls != 1 {
 		t.Fatalf("create error=%v, calls=%d", err, calls)
 	}
-	if want := "Created " + wantName + ". Enter with: hk attach " + wantName + "\n"; out.String() != want {
+	if want := "Created empty VM " + wantName + ". Enter with: hk attach " + wantName + "\n"; out.String() != want {
 		t.Fatalf("output = %q, want %q", out.String(), want)
 	}
 	if !errors.Is(received.Err(), context.Canceled) {

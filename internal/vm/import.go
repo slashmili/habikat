@@ -1,0 +1,111 @@
+package vm
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"syscall"
+	"time"
+
+	"habikato.local/habikato/internal/repository"
+)
+
+const receiveBundle = `set -eu
+umask 077
+mkdir /home/hk/.hk-import
+cat > /home/hk/.hk-import/project.bundle`
+
+func importCommand(branch, commit string) string {
+	return `set -eu
+umask 077
+export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
+trap 'rm -rf /home/hk/.hk-import /home/hk/.hk-workspace' EXIT
+branch=` + shellQuote(branch) + `
+commit=` + shellQuote(commit) + `
+git -c core.hooksPath=/dev/null clone --template= --no-checkout --no-local --no-hardlinks --no-tags --single-branch --branch="$branch" -- /home/hk/.hk-import/project.bundle /home/hk/.hk-workspace
+cd /home/hk/.hk-workspace
+git remote remove origin
+git symbolic-ref HEAD "refs/heads/$branch"
+git -c core.hooksPath=/dev/null reset --hard "$commit"
+test "$(git rev-parse HEAD)" = "$commit"
+test "$(git symbolic-ref HEAD)" = "refs/heads/$branch"
+test -z "$(git status --porcelain=v1 --untracked-files=all)"
+test ! -e .git/objects/info/alternates
+test ! -e /home/hk/workspace
+mv /home/hk/.hk-workspace /home/hk/workspace
+rm -rf /home/hk/.hk-import`
+}
+
+func importProject(ctx context.Context, dir string, snapshot *repository.Snapshot) error {
+	bundle, err := os.Open(snapshot.Bundle)
+	if err != nil {
+		return err
+	}
+	defer bundle.Close()
+	if err := transferBundle(ctx, dir, bundle); err != nil {
+		return fmt.Errorf("transfer bundle: %w", err)
+	}
+	if err := sshCommand(ctx, dir, importCommand(snapshot.Branch, snapshot.Commit), nil); err != nil {
+		return fmt.Errorf("clone bundle: %w", err)
+	}
+	return nil
+}
+
+func sshCommand(ctx context.Context, dir, command string, in io.Reader) error {
+	_, err := sshOutput(ctx, dir, command, in)
+	return err
+}
+
+const maxGuestOutput = 64 << 10
+
+var errGuestOutputLimit = errors.New("guest command output exceeds 64 KiB limit")
+
+type limitedGuestOutput struct {
+	data     []byte
+	overflow bool
+}
+
+func (out *limitedGuestOutput) Write(p []byte) (int, error) {
+	out.captureUpToLimit(p)
+	return len(p), nil
+}
+
+func (out *limitedGuestOutput) captureUpToLimit(p []byte) {
+	remaining := maxGuestOutput - len(out.data)
+	if len(p) > remaining {
+		out.overflow = true
+		p = p[:remaining]
+	}
+	out.data = append(out.data, p...)
+}
+
+func sshOutput(ctx context.Context, dir, command string, in io.Reader) ([]byte, error) {
+	args, err := sshArgs()
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, "-T", "hk@habikato", command)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd.Dir, cmd.Stdin = dir, in
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
+	out := &limitedGuestOutput{}
+	cmd.Stdout, cmd.Stderr = out, out
+	err = cmd.Run()
+	if out.overflow {
+		err = errors.Join(err, errGuestOutputLimit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("guest command: %w: %s", errors.Join(err, ctx.Err()), strings.TrimSpace(string(out.data)))
+	}
+	return out.data, ctx.Err()
+}
+
+var transferBundle = func(ctx context.Context, dir string, in io.Reader) error {
+	return sshCommand(ctx, dir, receiveBundle, in)
+}

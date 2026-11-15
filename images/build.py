@@ -16,6 +16,24 @@ def digest(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def download_artifact(artifact, cache):
+    """Verify both downloads and cache hits; publish only verified artifacts."""
+    path = cache / artifact["file"]
+    if not path.exists():
+        with tempfile.TemporaryDirectory(prefix=".hk-download-", dir=cache) as download:
+            target = Path(download) / path.name
+            subprocess.run(["curl", "--disable", "--fail", "--location", "--show-error", "--silent",
+                            "--proto", "=https", "--proto-redir", "=https",
+                            "--connect-timeout", "20", "--max-time", "300", "--retry", "2",
+                            artifact["url"], "-o", str(target)], check=True)
+            if digest(target) != artifact["sha256"]:
+                raise RuntimeError(f"download SHA-256 mismatch: {path.name}")
+            target.rename(path)
+    if digest(path) != artifact["sha256"]:
+        raise RuntimeError(f"cached SHA-256 mismatch: {path.name}")
+    return path
+
+
 def build():
     recipe = Path(__file__).resolve().parent
     cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
@@ -27,27 +45,13 @@ def build():
     if os.uname().machine != "x86_64":
         sys.exit("this image supports Linux x86_64 only")
     os.umask(0o077)
-    for tool in ("gh", "curl", "tar", "mkfs.ext4"):
+    for tool in ("curl", "tar", "mkfs.ext4"):
         if not shutil.which(tool):
             sys.exit(f"missing required build tool: {tool}")
     cache.mkdir(parents=True, exist_ok=True)
     artifacts = json.loads((recipe / "artifacts.lock.json").read_text())
     for artifact in artifacts:
-        path = cache / artifact["file"]
-        if not path.exists():
-            with tempfile.TemporaryDirectory(dir=cache) as download:
-                target = Path(download) / path.name
-                if "repository" in artifact:
-                    subprocess.run(["gh", "release", "download", artifact["tag"], "--repo",
-                                    artifact["repository"], "--pattern", path.name, "--dir", download], check=True)
-                else:
-                    subprocess.run(["curl", "--fail", "--location", "--show-error", "--silent",
-                                    artifact["url"], "-o", str(target)], check=True)
-                if digest(target) != artifact["sha256"]:
-                    sys.exit(f"download SHA-256 mismatch: {path.name}")
-                target.rename(path)
-        if digest(path) != artifact["sha256"]:
-            sys.exit(f"cached SHA-256 mismatch: {path.name}")
+        download_artifact(artifact, cache)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     # Publish only a fully built image; leave no partially usable output.
@@ -70,7 +74,7 @@ def build():
             (root / directory).mkdir(parents=True, exist_ok=True)
         for applet in ("sh", "mount", "mkdir", "chmod", "chown", "cp", "cat", "hostname", "id",
                        "ls", "pwd", "stty", "sleep", "touch", "rm", "uname", "ps", "grep", "env",
-                       "wc", "head", "tail", "find", "sync", "false", "true", "kill", "echo"):
+                       "wc", "head", "tail", "find", "sync", "false", "true", "kill", "echo", "mv"):
             dest = root / "bin" / applet
             if not dest.exists():
                 dest.symlink_to("busybox")

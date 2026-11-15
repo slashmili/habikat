@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"habikato.local/habikato/internal/vm"
 	"io"
 	"strings"
 	"testing"
@@ -44,14 +45,14 @@ func TestRunCommands(t *testing.T) {
 			args:       []string{"create", "--name", "alpha-7"},
 			operation:  "create",
 			vmName:     "alpha-7",
-			wantOutput: "Created alpha-7. Enter with: hk attach alpha-7\n",
+			wantOutput: "Created empty VM alpha-7. Enter with: hk attach alpha-7\n",
 		},
 		{
 			name:       "create with equals",
 			args:       []string{"create", "--name=beta-8"},
 			operation:  "create",
 			vmName:     "beta-8",
-			wantOutput: "Created beta-8. Enter with: hk attach beta-8\n",
+			wantOutput: "Created empty VM beta-8. Enter with: hk attach beta-8\n",
 		},
 		{
 			name:      "attach",
@@ -97,11 +98,11 @@ func TestRunCommands(t *testing.T) {
 					ops := unexpectedVMOperations(t)
 					switch tc.operation {
 					case "create":
-						ops.create = recordWithContext
+						ops.create = func(ctx context.Context, name string) (*vm.Project, error) { return nil, recordWithContext(ctx, name) }
 					case "attach":
 						ops.attach = record
 					case "delete":
-						ops.delete = recordWithContext
+						ops.delete = func(ctx context.Context, name string, _ func() error) error { return recordWithContext(ctx, name) }
 					default:
 						t.Fatalf("unknown test operation %q", tc.operation)
 					}
@@ -235,17 +236,17 @@ func TestRunHelpOutputFailure(t *testing.T) {
 func unexpectedVMOperations(t *testing.T) vmOperations {
 	t.Helper()
 	return vmOperations{
-		create: func(_ context.Context, name string) error {
+		create: func(_ context.Context, name string) (*vm.Project, error) {
 			t.Helper()
 			t.Fatalf("unexpected create operation for %q", name)
-			return nil
+			return nil, nil
 		},
 		attach: func(name string) error {
 			t.Helper()
 			t.Fatalf("unexpected attach operation for %q", name)
 			return nil
 		},
-		delete: func(_ context.Context, name string) error {
+		delete: func(_ context.Context, name string, _ func() error) error {
 			t.Helper()
 			t.Fatalf("unexpected delete operation for %q", name)
 			return nil

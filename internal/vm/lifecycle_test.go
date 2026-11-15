@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -228,12 +229,39 @@ func TestDeleteStopsOwnedProcess(t *testing.T) {
 	if err := saveRecord(dir, child.state); err != nil {
 		t.Fatal(err)
 	}
-	if err := Delete(t.Context(), "owned"); err != nil {
+	if err := Delete(t.Context(), "owned", nil); err != nil {
 		t.Fatal(err)
 	}
 	child.assertKilled(t)
 	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("deleted VM directory remains: %v", err)
+	}
+}
+
+func TestDeleteSkipsConfirmationWhenClean(t *testing.T) {
+	root := privateTempDir(t)
+	t.Setenv("HK_STATE_DIR", root)
+	dir := makeVMDir(t, root, "clean")
+	child := startTestProcess(t, firecrackerArgs(dir))
+	state := child.state
+	state.Ready = true
+	if err := saveRecord(dir, state); err != nil {
+		t.Fatal(err)
+	}
+	bin := privateTempDir(t)
+	writeTestFile(t, filepath.Join(bin, "ssh"), []byte("#!/bin/sh\nprintf 'clean\\n'\n"))
+	if err := os.Chmod(filepath.Join(bin, "ssh"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if err := Delete(t.Context(), "clean", func() error {
+		return errors.New("clean VM must not ask for confirmation")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	child.assertKilled(t)
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("clean VM was not deleted: %v", err)
 	}
 }
 
@@ -420,5 +448,76 @@ func assertErrorContains(t *testing.T, err error, want string) {
 	t.Helper()
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("error = %v, want %q", err, want)
+	}
+}
+
+func TestDeleteConfirmationInstanceAndLock(t *testing.T) {
+	for _, kind := range []string{"reject", "cancel", "replace", "identity", "approve", "missing"} {
+		t.Run(kind, func(t *testing.T) {
+			root := privateTempDir(t)
+			t.Setenv("HK_STATE_DIR", root)
+			dir := filepath.Join(root, "vm")
+			if kind != "missing" {
+				makeVMDir(t, root, "vm")
+				if err := saveRecord(dir, record{}); err != nil {
+					t.Fatal(err)
+				}
+				writeTestFile(t, filepath.Join(dir, "disk"), []byte("valuable"))
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			calls, stops := 0, 0
+			err := deleteConfirmed(ctx, "vm", func() error {
+				calls++
+				assertLifecycleLockAvailable(t)
+				switch kind {
+				case "reject":
+					return errors.New("no")
+				case "cancel":
+					cancel()
+				case "replace":
+					if err := os.Rename(dir, dir+"-original"); err != nil {
+						t.Fatal(err)
+					}
+					makeVMDir(t, root, "vm")
+					if err := saveRecord(dir, record{}); err != nil {
+						t.Fatal(err)
+					}
+					writeTestFile(t, filepath.Join(dir, "disk"), []byte("valuable"))
+				case "identity":
+					if err := saveRecord(dir, record{PID: 42, StartTime: "replacement"}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return nil
+			}, func(context.Context, string, record) (bool, error) { return true, nil }, func(record, string) error { stops++; return nil })
+			if kind == "approve" {
+				if err != nil || stops != 1 || calls != 1 {
+					t.Fatalf("approved deletion: %v %d %d", err, stops, calls)
+				}
+			} else if kind == "missing" {
+				if err != nil || stops != 0 || calls != 0 {
+					t.Fatalf("missing: %v %d %d", err, stops, calls)
+				}
+			} else {
+				if err == nil || stops != 0 {
+					t.Fatalf("unsafe deletion: %v stops=%d", err, stops)
+				}
+				assertFileContents(t, filepath.Join(dir, "disk"), []byte("valuable"))
+			}
+		})
+	}
+}
+
+func assertLifecycleLockAvailable(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	_, lock, err := lockState(ctx, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

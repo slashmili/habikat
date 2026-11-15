@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -254,7 +255,7 @@ func FuzzReadRecord(f *testing.F) {
 		if err := saveRecord(dir, got); err != nil {
 			t.Fatal(err)
 		}
-		if again, err := readRecord(dir); err != nil || again != got {
+		if again, err := readRecord(dir); err != nil || !reflect.DeepEqual(again, got) {
 			t.Fatalf("state changed after save: %+v, %v; want %+v", again, err, got)
 		}
 	})

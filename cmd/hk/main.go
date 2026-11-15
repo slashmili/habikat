@@ -12,12 +12,12 @@ import (
 	"habikato.local/habikato/internal/vm"
 )
 
-const usage = "usage: hk create --name NAME | hk attach NAME | hk delete NAME"
+const usage = "usage: hk create --name NAME | hk attach NAME | hk delete [--force] NAME"
 
 type vmOperations struct {
-	create func(context.Context, string) error
+	create func(context.Context, string) (*vm.Project, error)
 	attach func(string) error
-	delete func(context.Context, string) error
+	delete func(context.Context, string, func() error) error
 	proxy  func(string, io.Reader, io.Writer) error
 }
 
@@ -69,6 +69,7 @@ func run(args []string, in io.Reader, out io.Writer, ops vmOperations) error {
 		return runDelete(
 			ctx,
 			args[1:],
+			in,
 			out,
 			ops.delete,
 		)
