@@ -89,27 +89,31 @@ func FuzzImportBoundary(f *testing.F) {
 		if strings.ContainsRune(branch, 0) || strings.ContainsRune(commit, 0) || len(branch)+len(commit) > 4096 {
 			t.Skip()
 		}
-		prefix := importAssignmentsWithFixedDestinations(t, importCommand(branch, commit))
-		cmd := exec.CommandContext(t.Context(), "/bin/sh", "-c", prefix+"\nprintf '%s\\000%s' \"$branch\" \"$commit\"")
+		prefix := importCloneWithFixedDestinations(t, branch, commit)
+		probe := "git() { printf '%s\\000' \"$@\"; }\n" + prefix + "\nprintf '%s\\000%s' \"$branch\" \"$commit\""
+		cmd := exec.CommandContext(t.Context(), "/bin/sh", "-c", probe)
 		out, err := cmd.Output()
-		want := append(append([]byte(branch), 0), []byte(commit)...)
+		want := []byte(strings.Join([]string{
+			"-c", "core.hooksPath=/dev/null", "clone", "--template=", "--no-checkout", "--no-local",
+			"--no-hardlinks", "--no-tags", "--single-branch", "--branch=" + branch, "--",
+			"/home/hk/.hk-import/project.bundle", "/home/hk/.hk-workspace", branch, commit,
+		}, "\x00"))
 		if err != nil || !bytes.Equal(out, want) {
-			t.Fatalf("input escaped assignment: %q %q, %q %v", branch, commit, out, err)
+			t.Fatalf("input escaped clone or assignment: %q %q, %q %v", branch, commit, out, err)
 		}
 	})
 }
 
-func importAssignmentsWithFixedDestinations(t *testing.T, command string) string {
+func importCloneWithFixedDestinations(t *testing.T, branch, commit string) string {
 	t.Helper()
-	start := strings.Index(command, "branch=")
-	end := strings.LastIndex(command, "\ngit -c core.hooksPath=/dev/null clone")
-	if start < 0 || end < start {
+	command := importCommand(branch, commit)
+	clone := importCloneCommand(branch, commit)
+	if !strings.Contains(command, "\n"+clone+"\ncd /home/hk/.hk-workspace\n") {
 		t.Fatal("import lost data boundary")
 	}
-	cloneDestination := "/home/hk/.hk-import/project.bundle /home/hk/.hk-workspace"
-	finalDestination := "mv /home/hk/.hk-workspace /home/hk/workspace"
-	if !strings.Contains(command[end:], cloneDestination) || !strings.Contains(command[end:], finalDestination) {
+	finalDestination := "mv /home/hk/.hk-workspace /home/hk/workspace\nrm -rf /home/hk/.hk-import"
+	if !strings.HasSuffix(command, finalDestination) {
 		t.Fatal("destinations changed")
 	}
-	return command[start:end]
+	return clone
 }

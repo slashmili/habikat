@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"habikato.local/habikato/internal/git"
 	"habikato.local/habikato/internal/repository"
 )
 
@@ -20,24 +21,37 @@ mkdir /home/hk/.hk-import
 cat > /home/hk/.hk-import/project.bundle`
 
 func importCommand(branch, commit string) string {
-	return `set -eu
-umask 077
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
-trap 'rm -rf /home/hk/.hk-import /home/hk/.hk-workspace' EXIT
-branch=` + shellQuote(branch) + `
-commit=` + shellQuote(commit) + `
-git -c core.hooksPath=/dev/null clone --template= --no-checkout --no-local --no-hardlinks --no-tags --single-branch --branch="$branch" -- /home/hk/.hk-import/project.bundle /home/hk/.hk-workspace
-cd /home/hk/.hk-workspace
-git remote remove origin
-git symbolic-ref HEAD "refs/heads/$branch"
-git -c core.hooksPath=/dev/null reset --hard "$commit"
-test "$(git rev-parse HEAD)" = "$commit"
-test "$(git symbolic-ref HEAD)" = "refs/heads/$branch"
-test -z "$(git status --porcelain=v1 --untracked-files=all)"
-test ! -e .git/objects/info/alternates
-test ! -e /home/hk/workspace
-mv /home/hk/.hk-workspace /home/hk/workspace
-rm -rf /home/hk/.hk-import`
+	g := git.ImportRemote()
+	return strings.Join([]string{
+		"set -eu",
+		"umask 077",
+		g.Environment(),
+		`trap 'rm -rf /home/hk/.hk-import /home/hk/.hk-workspace' EXIT`,
+		importCloneCommand(branch, commit),
+		"cd /home/hk/.hk-workspace",
+		g.Command("remote", "remove", "origin"),
+		g.Command("symbolic-ref", "HEAD", "refs/heads/"+branch),
+		g.Command("reset", "--hard", commit),
+		`test "$(` + g.Command("rev-parse", "HEAD") + `)" = "$commit"`,
+		`test "$(` + g.Command("symbolic-ref", "HEAD") + `)" = "refs/heads/$branch"`,
+		`test -z "$(` + g.Command(git.Status()...) + `)"`,
+		"test ! -e .git/objects/info/alternates",
+		"test ! -e /home/hk/workspace",
+		"mv /home/hk/.hk-workspace /home/hk/workspace",
+		"rm -rf /home/hk/.hk-import",
+	}, "\n")
+}
+
+func importCloneCommand(branch, commit string) string {
+	return strings.Join([]string{
+		"branch=" + shellQuote(branch),
+		"commit=" + shellQuote(commit),
+		git.ImportRemote().Command(
+			"clone", "--template=", "--no-checkout", "--no-local", "--no-hardlinks", "--no-tags",
+			"--single-branch", "--branch="+branch, "--",
+			"/home/hk/.hk-import/project.bundle", "/home/hk/.hk-workspace",
+		),
+	}, "\n")
 }
 
 func importProject(ctx context.Context, dir string, snapshot *repository.Snapshot) error {

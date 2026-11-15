@@ -5,21 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
-
-func TestGitEnvironment(t *testing.T) {
-	t.Setenv("GIT_DIR", "/must/not/read")
-	t.Setenv("GIT_CONFIG_COUNT", "1")
-	t.Setenv("GIT_CONFIG_KEY_0", "core.sshCommand")
-	t.Setenv("GIT_CONFIG_VALUE_0", "bad-command")
-	for _, entry := range gitEnv() {
-		if strings.Contains(entry, "must/not/read") || strings.Contains(entry, "bad-command") || strings.HasPrefix(entry, "GIT_CONFIG_COUNT=") {
-			t.Fatalf("inherited unsafe environment: %s", entry)
-		}
-	}
-}
 
 func TestCaptureCancellationAndInvalidDirectory(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())

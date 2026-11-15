@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"habikato.local/habikato/internal/git"
 )
 
 func guestHasChanges(ctx context.Context, dir string, state record) (bool, error) {
@@ -51,21 +53,21 @@ fi
 }
 
 func projectChangesCommand(project *Project) string {
+	g := git.InspectionRemote()
 	return `test ! -L workspace && test -d workspace/.git || changed
 cd workspace
-export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 GIT_NO_LAZY_FETCH=1
-git() { command git -c core.fsmonitor=false -c core.untrackedCache=false -c core.fileMode=true -c core.hooksPath=/dev/null "$@"; }
+` + g.Environment() + `
 commit=` + shellQuote(project.Commit) + `
-status=$(git status --porcelain=v1 --untracked-files=all --ignored)
+status=$(` + g.Command(git.Status("--ignored")...) + `)
 test -z "$status" || changed
 check_flags_hiding_worktree_changes() {
-    files=$(git -c core.quotePath=true ls-files -v)
+    files=$(` + g.WithConfig("core.quotePath=true").Command(git.IndexFlags()...) + `)
     if printf '%s\n' "$files" | grep -q '^[a-zS] '; then changed; fi
 }
 check_flags_hiding_worktree_changes
-head=$(git rev-parse --verify HEAD)
+head=$(` + g.Command("rev-parse", "--verify", "HEAD") + `)
 test "$head" = "$commit" || changed
-commits=$(git rev-list --all --reflog --not "$commit")
+commits=$(` + g.Command("rev-list", "--all", "--reflog", "--not", project.Commit) + `)
 test -z "$commits" || changed
 printf 'clean\n'`
 }
