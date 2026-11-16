@@ -16,6 +16,7 @@ const usage = `usage: hk create --name NAME [--with-git-config]
 hk attach NAME
 hk fetch [--force] NAME
 hk delete [--force] NAME
+hk list [-a|--all]
 
 --with-git-config imports only user.name and user.email into the guest repository.
 hk fetch imports committed branches from a running VM without changing your checkout.
@@ -28,6 +29,7 @@ type vmOperations struct {
 	delete func(context.Context, string, func() error) error
 	fetch  func(context.Context, string, func(vm.GuestChanges) error) (*vm.FetchResult, error)
 	proxy  func(string, io.Reader, io.Writer) error
+	list   func(context.Context, bool) ([]vm.Listing, error)
 }
 
 func main() {
@@ -37,6 +39,7 @@ func main() {
 		delete: vm.Delete,
 		fetch:  vm.Fetch,
 		proxy:  vm.Proxy,
+		list:   vm.List,
 	}
 	if err := run(
 		os.Args[1:],
@@ -63,6 +66,8 @@ func run(args []string, in io.Reader, out io.Writer, ops vmOperations) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	switch args[0] {
+	case "list":
+		return runList(ctx, args[1:], out, ops.list)
 	case "create":
 		return runCreate(
 			ctx,

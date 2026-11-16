@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
 )
@@ -22,6 +23,8 @@ var validCommit = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 var validName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 var validInstanceID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+var validBootID = regexp.MustCompile(`^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`)
 
 func ValidateName(name string) error {
 	if !validName.MatchString(name) {
@@ -39,11 +42,18 @@ type Project struct {
 }
 
 type record struct {
-	InstanceID string   `json:"instance_id,omitempty"`
-	Project    *Project `json:"project,omitempty"`
-	PID        int      `json:"pid"`
-	StartTime  string   `json:"start_time"`
-	Ready      bool     `json:"ready"`
+	SourceDirectory string   `json:"source_directory,omitempty"`
+	BootID          string   `json:"boot_id,omitempty"`
+	InstanceID      string   `json:"instance_id,omitempty"`
+	Project         *Project `json:"project,omitempty"`
+	PID             int      `json:"pid"`
+	StartTime       string   `json:"start_time"`
+	Ready           bool     `json:"ready"`
+}
+
+type storedRecord struct {
+	record
+	SourceDirectoryBytes []byte `json:"source_directory_bytes,omitempty"`
 }
 
 func stateHome() (string, error) {
@@ -108,7 +118,12 @@ func lockState(ctx context.Context, name string) (string, *os.File, error) {
 }
 
 func saveRecord(dir string, state record) error {
-	data, err := json.Marshal(state)
+	stored := storedRecord{record: state}
+	if !utf8.ValidString(state.SourceDirectory) {
+		stored.SourceDirectoryBytes = []byte(state.SourceDirectory)
+		stored.SourceDirectory = ""
+	}
+	data, err := json.Marshal(stored)
 	if err != nil {
 		return err
 	}
@@ -132,18 +147,38 @@ func readRecord(dir string) (record, error) {
 	if err != nil {
 		return record{}, err
 	}
-	var state *record
-	if err := json.Unmarshal(data, &state); err != nil {
+	return decodeRecord(data)
+}
+
+func decodeRecord(data []byte) (record, error) {
+	if !utf8.Valid(data) {
+		return record{}, errors.New("read VM state: invalid UTF-8")
+	}
+	var stored *storedRecord
+	if err := json.Unmarshal(data, &stored); err != nil {
 		return record{}, fmt.Errorf("read VM state: %w", err)
 	}
-	if state == nil {
+	if stored == nil {
 		return record{}, errors.New("read VM state: expected an object")
+	}
+	state := &stored.record
+	if stored.SourceDirectoryBytes != nil {
+		if state.SourceDirectory != "" {
+			return record{}, errors.New("ambiguous VM source directory")
+		}
+		state.SourceDirectory = string(stored.SourceDirectoryBytes)
 	}
 	if state.PID < 0 || (state.PID != 0 && state.StartTime == "") || (state.Ready && state.PID == 0) {
 		return record{}, errors.New("invalid VM process identity")
 	}
 	if state.InstanceID != "" && !validInstanceID.MatchString(state.InstanceID) {
 		return record{}, errors.New("invalid VM instance identity")
+	}
+	if state.BootID != "" && !validBootID.MatchString(state.BootID) {
+		return record{}, errors.New("invalid VM host boot identity")
+	}
+	if !validSourceDirectory(state.SourceDirectory) {
+		return record{}, errors.New("invalid VM source directory")
 	}
 	if state.Project != nil {
 		p := state.Project
@@ -152,6 +187,13 @@ func readRecord(dir string) (record, error) {
 		}
 	}
 	return *state, nil
+}
+
+func validSourceDirectory(path string) bool {
+	if path == "" {
+		return true
+	}
+	return filepath.IsAbs(path) && filepath.Clean(path) == path && !strings.ContainsRune(path, 0)
 }
 
 func newInstanceID() (string, error) {

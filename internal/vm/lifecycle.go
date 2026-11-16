@@ -70,6 +70,10 @@ func Create(ctx context.Context, name string, options CreateOptions) (project *P
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
+	sourceDirectory, err := repository.SourceDirectory(ctx, ".")
+	if err != nil {
+		return nil, err
+	}
 	snapshot, err := captureProject(ctx, ".", options)
 	if err != nil {
 		return nil, err
@@ -77,7 +81,7 @@ func Create(ctx context.Context, name string, options CreateOptions) (project *P
 	if snapshot != nil {
 		defer func() { result = errors.Join(result, snapshot.Close()) }()
 	}
-	err = create(ctx, name, snapshot)
+	err = create(ctx, name, snapshot, sourceDirectory)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +110,7 @@ func captureProject(ctx context.Context, dir string, options CreateOptions) (*re
 	return snapshot, nil
 }
 
-func create(ctx context.Context, name string, snapshot *repository.Snapshot) (result error) {
+func create(ctx context.Context, name string, snapshot *repository.Snapshot, sourceDirectory string) (result error) {
 	if err := ValidateName(name); err != nil {
 		return err
 	}
@@ -143,12 +147,16 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot) (re
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return fmt.Errorf("create VM directory (names must be unused): %w", err)
 	}
-	state := record{}
+	state := record{SourceDirectory: sourceDirectory}
 	defer func() {
 		if result != nil {
 			result = errors.Join(result, cleanupFailedCreate(state, dir, name))
 		}
 	}()
+	state.BootID, err = hostBootID()
+	if err != nil {
+		return err
+	}
 	state.InstanceID, err = newInstanceID()
 	if err != nil {
 		return err
@@ -255,25 +263,38 @@ func startDetachedFirecracker(ctx context.Context, images, configPath string, lo
 	return cmd.Process.Pid, nil
 }
 
+var errProcessExited = errors.New("process has exited")
+
 func processStart(pid int) (string, error) {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
 		return "", err
 	}
 	fields := strings.Fields(string(data)[strings.LastIndexByte(string(data), ')')+1:])
-	if len(fields) < 20 || fields[0] == "Z" {
-		return "", errors.New("process has exited")
+	if len(fields) < 20 {
+		return "", errors.New("invalid process identity")
+	}
+	if fields[0] == "Z" {
+		return "", errProcessExited
 	}
 	return fields[19], nil
 }
 
 func ownsConfig(pid int, dir string) bool {
+	owned, err := processOwnsConfig(pid, dir)
+	return err == nil && owned
+}
+
+func processOwnsConfig(pid int, dir string) (bool, error) {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil {
-		return false
+		return false, err
 	}
 	args := strings.Split(string(data), "\x00")
-	return len(args) == 5 && filepath.Base(args[0]) == "firecracker" && args[1] == "--no-api" && args[2] == "--config-file" && args[3] == filepath.Join(dir, "config.json")
+	if len(args) != 5 || filepath.Base(args[0]) != "firecracker" {
+		return false, nil
+	}
+	return args[1] == "--no-api" && args[2] == "--config-file" && args[3] == filepath.Join(dir, "config.json"), nil
 }
 
 func sameProcess(state record, dir string) bool {
