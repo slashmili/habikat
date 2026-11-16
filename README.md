@@ -35,7 +35,7 @@ Run `make build` again after changing the code.
 ## Test
 
 - `make test` — unit tests with race detection.
-- `make fuzz-cli fuzz-vm` — all fuzz tests.
+- `make fuzz` — all fuzz tests.
 - `make e2e` — real VM lifecycle and terminal tests.
 
 The end-to-end tests require working KVM and a built VM image.

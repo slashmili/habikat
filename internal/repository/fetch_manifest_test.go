@@ -2,6 +2,7 @@ package repository
 
 import (
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -16,6 +17,7 @@ func TestReadFetchManifest(t *testing.T) {
 		branches            []bundleBranch
 	}{
 		{"sha1", "# v2 git bundle\n" + sha1 + " refs/heads/main\n\nPACK", "sha1", []bundleBranch{{"refs/heads/main", sha1}}},
+		{"explicit sha1", "# v3 git bundle\n@object-format=sha1\n" + sha1 + " refs/heads/main\n\nPACK", "sha1", []bundleBranch{{"refs/heads/main", sha1}}},
 		{"sha256", "# v3 git bundle\n@object-format=sha256\n" + sha256 + " refs/heads/feature/login\n\nPACK", "sha256", []bundleBranch{{"refs/heads/feature/login", sha256}}},
 		{"shell and unicode", "# v2 git bundle\n" + sha1 + " refs/heads/topic/'$;()`é\n\n", "sha1", []bundleBranch{{"refs/heads/topic/'$;()`é", sha1}}},
 	} {
@@ -26,6 +28,36 @@ func TestReadFetchManifest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFetchManifestBranchLimit(t *testing.T) {
+	for _, count := range []int{4095, 4096, 4097} {
+		t.Run(strconv.Itoa(count), func(t *testing.T) {
+			manifest, err := readFetchManifest(strings.NewReader(fetchManifestWithBranches(count)))
+			if count > 4096 {
+				if err == nil || len(manifest.Branches) != 0 {
+					t.Fatalf("accepted %d branches: count=%d, error=%v", count, len(manifest.Branches), err)
+				}
+				return
+			}
+			if err != nil || len(manifest.Branches) != count {
+				t.Fatalf("read %d branches: count=%d, error=%v", count, len(manifest.Branches), err)
+			}
+		})
+	}
+}
+
+func fetchManifestWithBranches(count int) string {
+	var manifest strings.Builder
+	manifest.WriteString("# v2 git bundle\n")
+	for i := range count {
+		manifest.WriteString(strings.Repeat("a", 40))
+		manifest.WriteString(" refs/heads/branch-")
+		manifest.WriteString(strconv.Itoa(i))
+		manifest.WriteString("\n")
+	}
+	manifest.WriteString("\n")
+	return manifest.String()
 }
 
 func TestFetchManifestRejectsUntrustedMetadata(t *testing.T) {
@@ -80,9 +112,32 @@ func TestFetchRefNamespace(t *testing.T) {
 	}
 }
 
+func TestFetchRefLengthLimit(t *testing.T) {
+	for _, size := range []int{4095, 4096, 4097} {
+		t.Run(strconv.Itoa(size), func(t *testing.T) {
+			ref := "refs/heads/" + strings.Repeat("a", size-len("refs/heads/"))
+			destination, err := fetchDestinationRef(fetchInstance, ref)
+			if size > 4096 {
+				if err == nil || destination != "" {
+					t.Fatalf("accepted ref with %d bytes: %v", size, err)
+				}
+				return
+			}
+			want := "refs/remotes/hk/" + fetchInstance + "/" + strings.TrimPrefix(ref, "refs/heads/")
+			if err != nil || destination != want {
+				t.Fatalf("mapping ref with %d bytes: matches=%v, error=%v", size, destination == want, err)
+			}
+		})
+	}
+}
+
 func FuzzFetchManifest(f *testing.F) {
 	for _, seed := range []string{"", "# v2 git bundle\n" + strings.Repeat("a", 40) + " refs/heads/main\n\n", "# v3 git bundle\n@object-format=sha256\n" + strings.Repeat("b", 64) + " refs/heads/feature/login\n\n", "# v2 git bundle\n-000 refs/heads/../escape\n\n"} {
 		f.Add(seed)
+	}
+	f.Add("# v3 git bundle\n@object-format=sha1\n" + strings.Repeat("a", 40) + " refs/heads/main\n\n")
+	for _, count := range []int{4095, 4096, 4097} {
+		f.Add(fetchManifestWithBranches(count))
 	}
 	f.Fuzz(func(t *testing.T, input string) {
 		manifest, err := readFetchManifest(strings.NewReader(input))
@@ -92,7 +147,7 @@ func FuzzFetchManifest(f *testing.F) {
 			}
 			return
 		}
-		if manifest.Format != "sha1" && manifest.Format != "sha256" || len(manifest.Branches) == 0 {
+		if manifest.Format != "sha1" && manifest.Format != "sha256" || len(manifest.Branches) == 0 || len(manifest.Branches) > 4096 {
 			t.Fatalf("invalid accepted manifest: %+v", manifest)
 		}
 		seen := map[string]bool{}
@@ -110,6 +165,9 @@ func FuzzFetchNamespace(f *testing.F) {
 	for _, ref := range []string{"refs/heads/main", "refs/heads/feature/é", "--help", "refs/heads/../../heads/main", "refs/heads/a\x00b", "refs/heads/a@{b", "refs/tags/private"} {
 		f.Add(fetchInstance, ref)
 	}
+	for _, size := range []int{4095, 4096, 4097} {
+		f.Add(fetchInstance, "refs/heads/"+strings.Repeat("a", size-len("refs/heads/")))
+	}
 	f.Fuzz(func(t *testing.T, instance, source string) {
 		ref, err := fetchDestinationRef(instance, source)
 		if err != nil {
@@ -118,7 +176,7 @@ func FuzzFetchNamespace(f *testing.F) {
 			}
 			return
 		}
-		if len(instance) != 32 || !strings.HasPrefix(ref, "refs/remotes/hk/"+instance+"/") || strings.ContainsAny(ref, "\x00\r\n\\") || strings.Contains(ref, "..") {
+		if len(instance) != 32 || len(source) > 4096 || !strings.HasPrefix(ref, "refs/remotes/hk/"+instance+"/") || strings.ContainsAny(ref, "\x00\r\n\\") || strings.Contains(ref, "..") {
 			t.Fatalf("namespace escaped: %q %q => %q", instance, source, ref)
 		}
 	})

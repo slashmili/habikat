@@ -1,0 +1,15 @@
+unleash:
+  integration: true
+  tags: integration
+  workers: 2
+  timeout-coefficient: 10
+  output-statuses: lctv
+  threshold:
+    efficacy: 0
+    mutant-coverage: 0
+  exclude-files:
+    - '_e2e\.go$'
+
+mutants:
+  invert-logical:
+    enabled: true

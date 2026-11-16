@@ -1,4 +1,8 @@
-.PHONY: build image test fuzz test-cli fuzz-cli test-vm fuzz-vm fuzz-import fuzz-identity fuzz-fetch integration test-image property e2e
+.PHONY: build image test mutate fuzz test-cli fuzz-cli test-vm fuzz-vm fuzz-import fuzz-identity fuzz-fetch integration test-image property e2e
+
+export MUTATE_PATH ?= ./internal/repository
+export MUTATE_DIFF ?=
+export MUTATE_OUTPUT ?= mutation-report.json
 
 build:
 	go build -o bin/hk ./cmd/hk
@@ -8,6 +12,23 @@ image:
 
 test:
 	go test -race ./...
+
+mutate:
+	@set -eu; \
+	go_root="$$(go env GOROOT)"; \
+	go_cache="$$(go env GOCACHE)"; \
+	export PATH="$$go_root/bin:$$PATH"; \
+	export GOCACHE="$$go_cache"; \
+	export HK_IMAGE_DIR=/dev/null XDG_CACHE_HOME=/dev/null; \
+	export HK_STATE_DIR=/dev/null XDG_DATA_HOME=/dev/null; \
+	set --; \
+	if [ -n "$$MUTATE_DIFF" ]; then \
+		if [ "$$MUTATE_PATH" != . ]; then \
+			printf '%s\n' 'MUTATE_DIFF requires MUTATE_PATH=.' >&2; exit 2; \
+		fi; \
+		set -- --diff "$$MUTATE_DIFF"; \
+	fi; \
+	go tool gremlins unleash --config .gremlins.yaml --output "$$MUTATE_OUTPUT" "$$@" -- "$$MUTATE_PATH"
 
 fuzz: fuzz-cli fuzz-vm fuzz-import fuzz-identity fuzz-fetch
 

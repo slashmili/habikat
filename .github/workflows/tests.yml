@@ -38,7 +38,7 @@ jobs:
         run: go test -race -shuffle=on -count=1 -timeout=2m ./...
 
       - name: Fuzz tests
-        run: make fuzz-cli fuzz-vm
+        run: make fuzz
 
   e2e:
     name: Real VM tests
