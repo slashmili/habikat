@@ -15,9 +15,10 @@ import (
 )
 
 type Snapshot struct {
-	Branch string
-	Commit string
-	Bundle string
+	Branch      string
+	Commit      string
+	Bundle      string
+	GitIdentity *GitIdentity
 }
 
 func (s *Snapshot) Close() error { return os.RemoveAll(filepath.Dir(s.Bundle)) }

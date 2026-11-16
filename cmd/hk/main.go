@@ -12,12 +12,21 @@ import (
 	"github.com/slashmili/habikato/internal/vm"
 )
 
-const usage = "usage: hk create --name NAME | hk attach NAME | hk delete [--force] NAME"
+const usage = `usage: hk create --name NAME [--with-git-config]
+hk attach NAME
+hk fetch [--force] NAME
+hk delete [--force] NAME
+
+--with-git-config imports only user.name and user.email into the guest repository.
+hk fetch imports committed branches from a running VM without changing your checkout.
+--force skips only confirmation for uncommitted guest files, which remain in the VM.
+Ignored files and files outside the repository are excluded.`
 
 type vmOperations struct {
-	create func(context.Context, string) (*vm.Project, error)
+	create func(context.Context, string, vm.CreateOptions) (*vm.Project, error)
 	attach func(string) error
 	delete func(context.Context, string, func() error) error
+	fetch  func(context.Context, string, func(vm.GuestChanges) error) (*vm.FetchResult, error)
 	proxy  func(string, io.Reader, io.Writer) error
 }
 
@@ -26,6 +35,7 @@ func main() {
 		create: vm.Create,
 		attach: vm.Attach,
 		delete: vm.Delete,
+		fetch:  vm.Fetch,
 		proxy:  vm.Proxy,
 	}
 	if err := run(
@@ -73,6 +83,8 @@ func run(args []string, in io.Reader, out io.Writer, ops vmOperations) error {
 			out,
 			ops.delete,
 		)
+	case "fetch":
+		return runFetch(ctx, args[1:], in, out, ops.fetch)
 	default:
 		return errors.New(usage)
 	}

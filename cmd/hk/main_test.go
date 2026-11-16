@@ -98,7 +98,9 @@ func TestRunCommands(t *testing.T) {
 					ops := unexpectedVMOperations(t)
 					switch tc.operation {
 					case "create":
-						ops.create = func(ctx context.Context, name string) (*vm.Project, error) { return nil, recordWithContext(ctx, name) }
+						ops.create = func(ctx context.Context, name string, _ vm.CreateOptions) (*vm.Project, error) {
+							return nil, recordWithContext(ctx, name)
+						}
 					case "attach":
 						ops.attach = record
 					case "delete":
@@ -236,7 +238,7 @@ func TestRunHelpOutputFailure(t *testing.T) {
 func unexpectedVMOperations(t *testing.T) vmOperations {
 	t.Helper()
 	return vmOperations{
-		create: func(_ context.Context, name string) (*vm.Project, error) {
+		create: func(_ context.Context, name string, _ vm.CreateOptions) (*vm.Project, error) {
 			t.Helper()
 			t.Fatalf("unexpected create operation for %q", name)
 			return nil, nil

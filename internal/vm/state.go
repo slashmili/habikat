@@ -2,6 +2,8 @@ package vm
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +21,8 @@ var validCommit = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
 
 var validName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
+var validInstanceID = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
 func ValidateName(name string) error {
 	if !validName.MatchString(name) {
 		return errors.New("name must be 1–32 lowercase letters, digits or hyphens, starting with a letter")
@@ -35,10 +39,11 @@ type Project struct {
 }
 
 type record struct {
-	Project   *Project `json:"project,omitempty"`
-	PID       int      `json:"pid"`
-	StartTime string   `json:"start_time"`
-	Ready     bool     `json:"ready"`
+	InstanceID string   `json:"instance_id,omitempty"`
+	Project    *Project `json:"project,omitempty"`
+	PID        int      `json:"pid"`
+	StartTime  string   `json:"start_time"`
+	Ready      bool     `json:"ready"`
 }
 
 func stateHome() (string, error) {
@@ -137,6 +142,9 @@ func readRecord(dir string) (record, error) {
 	if state.PID < 0 || (state.PID != 0 && state.StartTime == "") || (state.Ready && state.PID == 0) {
 		return record{}, errors.New("invalid VM process identity")
 	}
+	if state.InstanceID != "" && !validInstanceID.MatchString(state.InstanceID) {
+		return record{}, errors.New("invalid VM instance identity")
+	}
 	if state.Project != nil {
 		p := state.Project
 		if p.Workspace != Workspace || p.Branch == "" || strings.ContainsAny(p.Branch, "\x00\r\n") || !validCommit.MatchString(p.Commit) {
@@ -144,4 +152,27 @@ func readRecord(dir string) (record, error) {
 		}
 	}
 	return *state, nil
+}
+
+func newInstanceID() (string, error) {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(random[:]), nil
+}
+
+func ensureInstanceID(dir string, state record) (record, error) {
+	if state.InstanceID != "" {
+		return state, nil
+	}
+	id, err := newInstanceID()
+	if err != nil {
+		return record{}, err
+	}
+	state.InstanceID = id
+	if err := saveRecord(dir, state); err != nil {
+		return record{}, err
+	}
+	return state, nil
 }

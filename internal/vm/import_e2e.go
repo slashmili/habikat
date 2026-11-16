@@ -6,9 +6,19 @@ import (
 	"context"
 	"io"
 	"os"
+
+	"github.com/slashmili/habikato/internal/repository"
 )
 
 func init() {
+	applyGitIdentity = func(ctx context.Context, dir string, identity repository.GitIdentity) error {
+		if os.Getenv("HK_E2E_IDENTITY_FAILURE") == "1" {
+			if err := sshCommand(ctx, dir, "chmod a-w /home/hk/workspace/.git", nil); err != nil {
+				return err
+			}
+		}
+		return configureGitIdentity(ctx, dir, identity)
+	}
 	original := transferBundle
 	transferBundle = func(ctx context.Context, dir string, in io.Reader) error {
 		marker := os.Getenv("HK_E2E_TRANSFER_BOUNDARY")

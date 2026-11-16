@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -43,6 +44,32 @@ var createArgCases = []struct {
 	{name: "help", args: []string{"--help"}, wantErr: flag.ErrHelp.Error()},
 }
 
+func TestCreateAcceptsGitIdentityFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"--name=demo", "--with-git-config"},
+		{"--with-git-config", "--name=demo"},
+	} {
+		if opts, err := parseCreateArgs(args); err != nil || !opts.withGitConfig {
+			t.Fatalf("identity opt-in rejected: %v", err)
+		}
+	}
+}
+
+func TestCreatePropagatesGitIdentitySelection(t *testing.T) {
+	for _, selected := range []bool{false, true} {
+		args := []string{"--name=demo", fmt.Sprintf("--with-git-config=%t", selected)}
+		err := runCreate(t.Context(), args, io.Discard, func(_ context.Context, name string, options vm.CreateOptions) (*vm.Project, error) {
+			if name != "demo" || options.WithGitConfig != selected {
+				t.Fatalf("selection changed: %q %+v", name, options)
+			}
+			return nil, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestRunCreateSuccess(t *testing.T) {
 	t.Parallel()
 	for _, tc := range createArgCases {
@@ -68,7 +95,7 @@ func TestRunCreateProjectSuccess(t *testing.T) {
 		t.Context(),
 		[]string{"--name=demo"},
 		&out,
-		func(context.Context, string) (*vm.Project, error) {
+		func(context.Context, string, vm.CreateOptions) (*vm.Project, error) {
 			calls++
 			if out.Len() != 0 {
 				t.Fatal("printed success before project creation finished")
@@ -94,7 +121,7 @@ func TestRunCreateFailure(t *testing.T) {
 		t.Context(),
 		[]string{"--name=demo"},
 		&out,
-		func(ctx context.Context, _ string) (*vm.Project, error) {
+		func(ctx context.Context, _ string, _ vm.CreateOptions) (*vm.Project, error) {
 			received = ctx
 			return nil, want
 		},
@@ -119,7 +146,7 @@ func TestRunCreateInvalidArgs(t *testing.T) {
 				t.Context(),
 				tc.args,
 				&out,
-				func(context.Context, string) (*vm.Project, error) {
+				func(context.Context, string, vm.CreateOptions) (*vm.Project, error) {
 					t.Fatal("invalid arguments reached VM creation")
 					return nil, nil
 				},
@@ -141,7 +168,7 @@ func TestRunCreateCancellation(t *testing.T) {
 		ctx,
 		[]string{"--name=demo"},
 		&out,
-		func(ctx context.Context, _ string) (*vm.Project, error) { return nil, ctx.Err() },
+		func(ctx context.Context, _ string, _ vm.CreateOptions) (*vm.Project, error) { return nil, ctx.Err() },
 	)
 	if !errors.Is(err, context.Canceled) || out.Len() != 0 {
 		t.Fatalf("error=%v, output=%q; want cancellation without success", err, out.String())
@@ -171,7 +198,7 @@ func TestRunCreateDeadline(t *testing.T) {
 					ctx,
 					[]string{"--name=demo"},
 					&out,
-					func(ctx context.Context, _ string) (*vm.Project, error) {
+					func(ctx context.Context, _ string, _ vm.CreateOptions) (*vm.Project, error) {
 						deadline, ok := ctx.Deadline()
 						if !ok || deadline.Sub(start) != tc.want {
 							t.Fatalf("deadline = %v, want %v after start", deadline, tc.want)
@@ -210,7 +237,7 @@ func TestRunCreateOutputFailure(t *testing.T) {
 				t.Context(),
 				[]string{"--name=demo"},
 				errorWriter{err: want},
-				func(context.Context, string) (*vm.Project, error) { return tc.project, nil },
+				func(context.Context, string, vm.CreateOptions) (*vm.Project, error) { return tc.project, nil },
 			)
 			if !errors.Is(err, want) {
 				t.Fatalf("error = %v, want %v", err, want)
@@ -257,7 +284,7 @@ func FuzzCreateArgs(f *testing.F) {
 				t.Fatalf("accepted invalid name %q from %q", opts.name, args)
 			}
 			assertCreateSuccess(t, args, opts.name)
-			roundTrip, err := parseCreateArgs([]string{"--name=" + opts.name})
+			roundTrip, err := parseCreateArgs([]string{"--name=" + opts.name, fmt.Sprintf("--with-git-config=%t", opts.withGitConfig)})
 			if err != nil || roundTrip != opts {
 				t.Fatalf("normalized arguments changed options: %+v, %v", roundTrip, err)
 			}
@@ -272,7 +299,7 @@ func FuzzCreateArgs(f *testing.F) {
 				t.Context(),
 				args,
 				io.Discard,
-				func(context.Context, string) (*vm.Project, error) {
+				func(context.Context, string, vm.CreateOptions) (*vm.Project, error) {
 					t.Fatal("invalid arguments reached VM creation")
 					return nil, nil
 				},
@@ -316,7 +343,7 @@ func assertCreateSuccess(t *testing.T, args []string, wantName string) {
 		t.Context(),
 		args,
 		&out,
-		func(ctx context.Context, name string) (*vm.Project, error) {
+		func(ctx context.Context, name string, _ vm.CreateOptions) (*vm.Project, error) {
 			calls++
 			received = ctx
 			if name != wantName {

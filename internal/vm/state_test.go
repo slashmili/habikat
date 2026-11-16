@@ -221,8 +221,24 @@ func TestRecordRejectsCorruption(t *testing.T) {
 	}
 }
 
+func TestRecordRejectsInvalidInstanceID(t *testing.T) {
+	for _, id := range []string{"../outside", "AABB", strings.Repeat("g", 32), strings.Repeat("a", 31), strings.Repeat("a", 33), "a\n"} {
+		t.Run(id, func(t *testing.T) {
+			dir := privateTempDir(t)
+			data, err := json.Marshal(map[string]string{"instance_id": id})
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, filepath.Join(dir, "state.json"), data)
+			if _, err := readRecord(dir); err == nil {
+				t.Fatal("accepted invalid instance identity")
+			}
+		})
+	}
+}
+
 func FuzzReadRecord(f *testing.F) {
-	for _, data := range []string{`{}`, `null`, `{`, `{"pid":-1}`, `{"pid":5,"start_time":"123","ready":true}`} {
+	for _, data := range []string{`{}`, `null`, `{`, `{"pid":-1}`, `{"pid":5,"start_time":"123","ready":true}`, `{"instance_id":"0123456789abcdef0123456789abcdef"}`, `{"instance_id":"../bad"}`} {
 		f.Add([]byte(data))
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -251,6 +267,9 @@ func FuzzReadRecord(f *testing.F) {
 		}
 		if got.PID < 0 || (got.PID > 0 && got.StartTime == "") || (got.Ready && got.PID == 0) {
 			t.Fatalf("accepted invalid process identity: %+v", got)
+		}
+		if got.InstanceID != "" && !validInstanceID.MatchString(got.InstanceID) {
+			t.Fatal("accepted invalid instance identifier")
 		}
 		if err := saveRecord(dir, got); err != nil {
 			t.Fatal(err)

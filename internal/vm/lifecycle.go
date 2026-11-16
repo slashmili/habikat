@@ -62,11 +62,15 @@ func verifyImages(dir string) error {
 	return nil
 }
 
-func Create(ctx context.Context, name string) (project *Project, result error) {
+type CreateOptions struct {
+	WithGitConfig bool
+}
+
+func Create(ctx context.Context, name string, options CreateOptions) (project *Project, result error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
 	}
-	snapshot, err := repository.Capture(ctx, ".")
+	snapshot, err := captureProject(ctx, ".", options)
 	if err != nil {
 		return nil, err
 	}
@@ -81,6 +85,25 @@ func Create(ctx context.Context, name string) (project *Project, result error) {
 		return &Project{Branch: snapshot.Branch, Commit: snapshot.Commit, Workspace: Workspace}, nil
 	}
 	return nil, nil
+}
+
+func captureProject(ctx context.Context, dir string, options CreateOptions) (*repository.Snapshot, error) {
+	var identity *repository.GitIdentity
+	var err error
+	if options.WithGitConfig {
+		identity, err = repository.ReadGitIdentity(ctx, dir)
+		if err != nil {
+			return nil, err
+		}
+	}
+	snapshot, err := repository.Capture(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot != nil {
+		snapshot.GitIdentity = identity
+	}
+	return snapshot, nil
 }
 
 func create(ctx context.Context, name string, snapshot *repository.Snapshot) (result error) {
@@ -126,6 +149,10 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot) (re
 			result = errors.Join(result, cleanupFailedCreate(state, dir, name))
 		}
 	}()
+	state.InstanceID, err = newInstanceID()
+	if err != nil {
+		return err
+	}
 	if err := saveRecord(dir, state); err != nil {
 		return err
 	}

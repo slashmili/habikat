@@ -66,6 +66,11 @@ func importProject(ctx context.Context, dir string, snapshot *repository.Snapsho
 	if err := sshCommand(ctx, dir, importCommand(snapshot.Branch, snapshot.Commit), nil); err != nil {
 		return fmt.Errorf("clone bundle: %w", err)
 	}
+	if snapshot.GitIdentity != nil {
+		if err := applyGitIdentity(ctx, dir, *snapshot.GitIdentity); err != nil {
+			return fmt.Errorf("configure guest Git identity: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -123,3 +128,5 @@ func sshOutput(ctx context.Context, dir, command string, in io.Reader) ([]byte, 
 var transferBundle = func(ctx context.Context, dir string, in io.Reader) error {
 	return sshCommand(ctx, dir, receiveBundle, in)
 }
+
+var applyGitIdentity = configureGitIdentity

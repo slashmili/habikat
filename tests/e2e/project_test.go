@@ -370,11 +370,16 @@ func TestProvisioningFailureAndCancellation(t *testing.T) {
 
 func deletePTY(t *testing.T, h *harness, name, answer string) (string, error) {
 	t.Helper()
+	return operationPTY(t, h, answer, "delete", name)
+}
+
+func operationPTY(t *testing.T, h *harness, answer string, args ...string) (string, error) {
+	t.Helper()
 	fd, err := unix.Open("/dev/ptmx", unix.O_RDWR|unix.O_NOCTTY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	master := os.NewFile(uintptr(fd), "delete-pty")
+	master := os.NewFile(uintptr(fd), "operation-pty")
 	defer master.Close()
 	if err := unix.IoctlSetPointerInt(fd, unix.TIOCSPTLCK, 0); err != nil {
 		t.Fatal(err)
@@ -388,9 +393,9 @@ func deletePTY(t *testing.T, h *harness, name, answer string) (string, error) {
 		t.Fatal(err)
 	}
 	defer slave.Close()
-	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, h.bin, "delete", name)
+	cmd := exec.CommandContext(ctx, h.bin, args...)
 	cmd.Env = h.env
 	cmd.Dir = h.cwd
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
@@ -432,7 +437,7 @@ func deletePTY(t *testing.T, h *harness, name, answer string) (string, error) {
 	}
 	err = cmd.Wait()
 	if !sent {
-		t.Fatalf("no deletion prompt: %s", transcript.String())
+		t.Fatalf("no confirmation prompt for %v: %s", args, transcript.String())
 	}
 	return transcript.String(), err
 }

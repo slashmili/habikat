@@ -35,16 +35,11 @@ func (g Local) Run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 func (g Local) Input(ctx context.Context, input []byte, args ...string) ([]byte, error) {
-	if len(args) == 0 {
-		return nil, errors.New("git command is required")
+	cmd, err := g.Command(ctx, args...)
+	if err != nil {
+		return nil, err
 	}
-	config := append(hostConfig(), g.config...)
-	cmd := exec.CommandContext(ctx, "git", arguments(config, args)...)
-	cmd.Env, cmd.Dir = HostEnvironment(), g.Dir
 	cmd.Stdin = bytes.NewReader(input)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -54,6 +49,24 @@ func (g Local) Input(ctx context.Context, input []byte, args ...string) ([]byte,
 		)
 	}
 	return out, nil
+}
+
+func (g Local) Command(ctx context.Context, args ...string) (*exec.Cmd, error) {
+	if len(args) == 0 {
+		return nil, errors.New("git command is required")
+	}
+	config := append(hostConfig(), g.config...)
+	cmd := exec.CommandContext(ctx, "git", arguments(config, args)...)
+	cmd.Env, cmd.Dir = HostEnvironment(), g.Dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
+	return cmd, nil
+}
+
+func (g Local) WithConfig(settings ...string) Local {
+	g.config = append(append([]string{}, g.config...), settings...)
+	return g
 }
 
 func (g *Local) DisableFilter(key string) {

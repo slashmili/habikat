@@ -2,6 +2,8 @@
 go = "latest"
 rust = "latest"
 
+[tools."go:golang.org/x/tools/gopls"]
+version = "0.24.0"
 [tools."github:firecracker-microvm/firecracker"]
 version = "1.18.0"
 asset_pattern = "firecracker-v1.18.0-x86_64.tgz"
