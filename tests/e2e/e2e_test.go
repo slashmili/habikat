@@ -278,7 +278,7 @@ func TestBootFailureCleanup(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		images = filepath.Join(cache, "habikato", "image")
+		images = filepath.Join(cache, "habikat", "image")
 	}
 	broken := filepath.Join(h.dir, "broken-image")
 	if err := os.Mkdir(broken, 0700); err != nil {

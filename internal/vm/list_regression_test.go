@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/slashmili/habikato/internal/repository"
+	"github.com/slashmili/habikat/internal/repository"
 	"golang.org/x/sys/unix"
 )
 

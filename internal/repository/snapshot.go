@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/slashmili/habikato/internal/git"
+	"github.com/slashmili/habikat/internal/git"
 )
 
 type Snapshot struct {

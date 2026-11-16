@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/slashmili/habikato/internal/git"
-	"github.com/slashmili/habikato/internal/repository"
+	"github.com/slashmili/habikat/internal/git"
+	"github.com/slashmili/habikat/internal/repository"
 )
 
 func TestGuestGitIdentityRoundTrip(t *testing.T) {

@@ -26,7 +26,7 @@ func newKey() ([]byte, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	block, err := ssh.MarshalPrivateKey(priv, "habikato disposable key")
+	block, err := ssh.MarshalPrivateKey(priv, "habikat disposable key")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -52,7 +52,7 @@ func provisionKeys(dir, name string) error {
 	}
 	for path, data := range map[string][]byte{
 		"identity":             client,
-		"known_hosts":          append([]byte("habikato "), hostPublic...),
+		"known_hosts":          append([]byte("habikat "), hostPublic...),
 		"seed/authorized_keys": authorized,
 		"seed/host_key":        host,
 		"seed/hostname":        []byte(name + "\n"),
@@ -94,7 +94,7 @@ func checkSSH(ctx context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
-	args = append(args, "-T", "hk@habikato", "test \"$(id -u)\" = 1000 && test -w \"$HOME\"")
+	args = append(args, "-T", "hk@habikat", "test \"$(id -u)\" = 1000 && test -w \"$HOME\"")
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ssh", args...)
@@ -128,7 +128,7 @@ func Attach(name string) error {
 	} else {
 		args = append(args, "-T")
 	}
-	args = append(args, "hk@habikato")
+	args = append(args, "hk@habikat")
 	if command := attachCommand(state.Project); command != "" {
 		args = append(args, command)
 	}

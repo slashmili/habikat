@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/slashmili/habikato/internal/vm"
+	"github.com/slashmili/habikat/internal/vm"
 )
 
 const usage = `usage: hk create --name NAME [--with-git-config]

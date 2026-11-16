@@ -24,7 +24,7 @@ func downloadExport(ctx context.Context, dir, command string, out io.Writer) err
 	if err != nil {
 		return err
 	}
-	args = append(args, "-T", "hk@habikato", command)
+	args = append(args, "-T", "hk@habikat", command)
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 	cmd.Dir = dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

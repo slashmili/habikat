@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/slashmili/habikato/internal/repository"
+	"github.com/slashmili/habikat/internal/repository"
 )
 
 func TestListDirectoryContexts(t *testing.T) {

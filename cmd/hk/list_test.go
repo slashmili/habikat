@@ -8,7 +8,7 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/slashmili/habikato/internal/vm"
+	"github.com/slashmili/habikat/internal/vm"
 )
 
 func TestParseListArgs(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/slashmili/habikato/internal/vm"
+	"github.com/slashmili/habikat/internal/vm"
 	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 )

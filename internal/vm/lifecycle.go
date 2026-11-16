@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/slashmili/habikato/internal/repository"
+	"github.com/slashmili/habikat/internal/repository"
 	"golang.org/x/sys/unix"
 )
 
@@ -29,7 +29,7 @@ func imageDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Abs(filepath.Join(cache, "habikato", "image"))
+	return filepath.Abs(filepath.Join(cache, "habikat", "image"))
 }
 
 func verifyImages(dir string) error {

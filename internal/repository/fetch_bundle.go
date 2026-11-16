@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/slashmili/habikato/internal/git"
+	"github.com/slashmili/habikat/internal/git"
 )
 
 const maxFetchBundle = 1 << 30

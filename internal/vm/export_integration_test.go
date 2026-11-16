@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/slashmili/habikato/internal/git"
+	"github.com/slashmili/habikat/internal/git"
 )
 
 type exportFixture struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/slashmili/habikato/internal/git"
+	"github.com/slashmili/habikat/internal/git"
 )
 
 func SourceDirectory(ctx context.Context, dir string) (string, error) {

@@ -1,10 +1,10 @@
-# Habikato
+# Habikat
 
-<img src="assets/logo.png" alt="Habikato logo" width="128">
+<img src="assets/logo.png" alt="Habikat logo" width="128">
 
-Habikato aims to make running coding agents safer by giving them disposable local virtual machines, separate from your host environment.
+Habikat aims to make running coding agents safer by giving them disposable local virtual machines, separate from your host environment.
 
-> Habikato is in alpha and not ready for general use.
+> Habikat is in alpha and not ready for general use.
 
 The current version supports creating VMs, opening a shell, fetching committed guest branches, and deleting VMs. Coding agents are not bundled yet, and guests have no internet access.
 

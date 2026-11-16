@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/slashmili/habikato/internal/git"
-	"github.com/slashmili/habikato/internal/repository"
+	"github.com/slashmili/habikat/internal/git"
+	"github.com/slashmili/habikat/internal/repository"
 )
 
 func configureGitIdentity(ctx context.Context, dir string, identity repository.GitIdentity) error {

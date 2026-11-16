@@ -19,7 +19,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if os.Getenv("HABIKATO_VM_TEST_CHILD") == "1" {
+	if os.Getenv("HABIKAT_VM_TEST_CHILD") == "1" {
 		fmt.Fprintln(os.Stdout, "ready")
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)
@@ -32,8 +32,8 @@ func TestImageDir(t *testing.T) {
 	t.Chdir(root)
 	for _, tc := range []struct{ name, image, cache, home, want string }{
 		{name: "explicit", image: "images/../chosen", cache: "ignored", want: filepath.Join(root, "chosen")},
-		{name: "xdg", cache: root, home: "ignored", want: filepath.Join(root, "habikato", "image")},
-		{name: "home", home: root, want: filepath.Join(root, ".cache", "habikato", "image")},
+		{name: "xdg", cache: root, home: "ignored", want: filepath.Join(root, "habikat", "image")},
+		{name: "home", home: root, want: filepath.Join(root, ".cache", "habikat", "image")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HK_IMAGE_DIR", tc.image)
@@ -376,7 +376,7 @@ func startTestProcess(t *testing.T, args []string) *testProcess {
 	}
 	cmd := exec.Command(exe)
 	cmd.Args = args
-	cmd.Env = append(os.Environ(), "HABIKATO_VM_TEST_CHILD=1")
+	cmd.Env = append(os.Environ(), "HABIKAT_VM_TEST_CHILD=1")
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)

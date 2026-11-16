@@ -61,7 +61,7 @@ func TestSourceDirectory(t *testing.T) {
 
 func TestSourceDirectoryRejectsBrokenRepositoryAndCancellation(t *testing.T) {
 	dir := t.TempDir()
-	put(t, filepath.Join(dir, ".git"), "gitdir: /missing-habikato-fixture\n")
+	put(t, filepath.Join(dir, ".git"), "gitdir: /missing-habikat-fixture\n")
 	if _, err := SourceDirectory(t.Context(), dir); err == nil {
 		t.Fatal("broken Git marker treated as an empty directory")
 	}

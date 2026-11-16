@@ -68,7 +68,7 @@ func stateHome() (string, error) {
 		}
 		base = filepath.Join(home, ".local", "share")
 	}
-	return filepath.Abs(filepath.Join(base, "habikato"))
+	return filepath.Abs(filepath.Join(base, "habikat"))
 }
 
 func privateDir(path string) error {

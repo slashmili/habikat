@@ -96,8 +96,8 @@ func TestStateHome(t *testing.T) {
 		name, state, data, home, want string
 	}{
 		{name: "explicit", state: "state/../chosen", data: "ignored", want: filepath.Join(root, "chosen")},
-		{name: "xdg", data: "data", home: "ignored", want: filepath.Join(root, "data", "habikato")},
-		{name: "home", home: root, want: filepath.Join(root, ".local", "share", "habikato")},
+		{name: "xdg", data: "data", home: "ignored", want: filepath.Join(root, "data", "habikat")},
+		{name: "home", home: root, want: filepath.Join(root, ".local", "share", "habikat")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HK_STATE_DIR", tc.state)

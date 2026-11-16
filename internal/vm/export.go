@@ -3,7 +3,7 @@ package vm
 import (
 	"strings"
 
-	"github.com/slashmili/habikato/internal/git"
+	"github.com/slashmili/habikat/internal/git"
 )
 
 func fetchStatusCommand(base string) string {

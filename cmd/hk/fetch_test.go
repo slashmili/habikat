@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/slashmili/habikato/internal/repository"
-	"github.com/slashmili/habikato/internal/vm"
+	"github.com/slashmili/habikat/internal/repository"
+	"github.com/slashmili/habikat/internal/vm"
 )
 
 func TestFetchArguments(t *testing.T) {

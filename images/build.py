@@ -37,8 +37,8 @@ def download_artifact(artifact, cache):
 def build():
     recipe = Path(__file__).resolve().parent
     cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    output = Path(sys.argv[1]) if len(sys.argv) > 1 else cache_home / "habikato/image"
-    cache = Path(sys.argv[2]) if len(sys.argv) > 2 else cache_home / "habikato/downloads"
+    output = Path(sys.argv[1]) if len(sys.argv) > 1 else cache_home / "habikat/image"
+    cache = Path(sys.argv[2]) if len(sys.argv) > 2 else cache_home / "habikat/downloads"
     output, cache = output.absolute(), cache.absolute()
     if len(sys.argv) > 3 or output.exists():
         sys.exit("usage: images/build.py [NEW_OUTPUT_DIR [DOWNLOAD_CACHE]] (output must not exist)")
@@ -80,7 +80,7 @@ def build():
                 dest.symlink_to("busybox")
         (root / "sbin/init").symlink_to("../bin/busybox")
         files = {
-            "etc/passwd": "root:x:0:0:root:/root:/bin/sh\nhk:x:1000:1000:Habikato:/home/hk:/bin/sh\nsshd:x:22:22:sshd:/var/empty:/bin/false\n",
+            "etc/passwd": "root:x:0:0:root:/root:/bin/sh\nhk:x:1000:1000:Habikat:/home/hk:/bin/sh\nsshd:x:22:22:sshd:/var/empty:/bin/false\n",
             "etc/group": "root:x:0:\nhk:x:1000:\nsshd:x:22:\n",
             "etc/shadow": "root:!:20000:0:99999:7:::\nhk:*:20000:0:99999:7:::\nsshd:!:20000:0:99999:7:::\n",
             "etc/shells": "/bin/sh\n",

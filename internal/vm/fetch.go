@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/slashmili/habikato/internal/repository"
+	"github.com/slashmili/habikat/internal/repository"
 )
 
 type FetchResult struct {

@@ -1,4 +1,4 @@
-module github.com/slashmili/habikato
+module github.com/slashmili/habikat
 
 go 1.27.4
 

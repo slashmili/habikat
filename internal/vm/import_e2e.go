@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/slashmili/habikato/internal/repository"
+	"github.com/slashmili/habikat/internal/repository"
 )
 
 func init() {

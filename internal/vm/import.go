@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/slashmili/habikato/internal/git"
-	"github.com/slashmili/habikato/internal/repository"
+	"github.com/slashmili/habikat/internal/git"
+	"github.com/slashmili/habikat/internal/repository"
 )
 
 const receiveBundle = `set -eu
@@ -107,7 +107,7 @@ func sshOutput(ctx context.Context, dir, command string, in io.Reader) ([]byte, 
 	if err != nil {
 		return nil, err
 	}
-	args = append(args, "-T", "hk@habikato", command)
+	args = append(args, "-T", "hk@habikat", command)
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 	cmd.Dir, cmd.Stdin = dir, in
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

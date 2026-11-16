@@ -3,7 +3,7 @@ package main
 import (
 	"errors"
 
-	"github.com/slashmili/habikato/internal/vm"
+	"github.com/slashmili/habikat/internal/vm"
 )
 
 func parseNameArg(args []string) (string, error) {

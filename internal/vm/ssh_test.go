@@ -83,7 +83,7 @@ func TestProvisionKeysWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertFileContents(t, filepath.Join(dir, "known_hosts"), append([]byte("habikato "), ssh.MarshalAuthorizedKey(host.PublicKey())...))
+	assertFileContents(t, filepath.Join(dir, "known_hosts"), append([]byte("habikat "), ssh.MarshalAuthorizedKey(host.PublicKey())...))
 	if !bytes.Equal(authorized, ssh.MarshalAuthorizedKey(client.PublicKey())) {
 		t.Fatal("guest authorized_keys does not trust the client identity")
 	}
@@ -222,7 +222,7 @@ func assertReadinessInvocation(t *testing.T, log, dir string) {
 	if len(args) < 4 || args[0] != dir {
 		t.Fatalf("SSH working directory/args: %q", args)
 	}
-	want := []string{"-T", "hk@habikato", `test "$(id -u)" = 1000 && test -w "$HOME"`}
+	want := []string{"-T", "hk@habikat", `test "$(id -u)" = 1000 && test -w "$HOME"`}
 	if !slices.Equal(args[len(args)-3:], want) {
 		t.Fatalf("readiness command = %q, want %q", args[len(args)-3:], want)
 	}

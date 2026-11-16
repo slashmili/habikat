@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/slashmili/habikato/internal/git"
+	"github.com/slashmili/habikat/internal/git"
 )
 
 type FetchedBranch struct {
@@ -59,7 +59,7 @@ func fetchGit(dir string) git.Local {
 	return (git.Local{Dir: dir}).WithConfig(
 		"gc.auto=0", "maintenance.auto=false", "fetch.writeCommitGraph=false",
 		"transfer.fsckObjects=true", "fetch.fsckObjects=true",
-		"user.name=Habikato", "user.email=habikato@localhost.invalid",
+		"user.name=Habikat", "user.email=habikat@localhost.invalid",
 	)
 }
 
