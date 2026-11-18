@@ -90,10 +90,18 @@ func TestStopGracefulWaitsForExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	beforeFile, err := os.Stat(filepath.Join(dir, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := Stop(t.Context(), "vm", false); err != nil {
 		t.Fatal(err)
 	}
 	assertFileContents(t, filepath.Join(dir, "state.json"), before)
+	afterFile, err := os.Stat(filepath.Join(dir, "state.json"))
+	if err != nil || !os.SameFile(beforeFile, afterFile) {
+		t.Fatalf("stopping a stopped VM rewrote its state: %v", err)
+	}
 }
 
 func TestStopAcknowledgmentIsNotExit(t *testing.T) {
@@ -524,7 +532,7 @@ func TestStopUndeliveredRequestKeepsVMUsable(t *testing.T) {
 	err := stopVM(t.Context(), "vm", false, time.Second, func(context.Context, record, string) error {
 		return fmt.Errorf("%w: connection refused", errShutdownNotDelivered)
 	})
-	if err == nil || strings.Contains(err.Error(), "may still complete") {
+	if err == nil || strings.Contains(err.Error(), "may still complete") || !strings.Contains(err.Error(), "VM is still running") {
 		t.Fatalf("undelivered request: %v", err)
 	}
 	child.assertAlive(t)
