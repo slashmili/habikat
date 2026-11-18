@@ -16,14 +16,17 @@ const usage = `usage: hk create --name NAME [--with-git-config]
 hk attach NAME
 hk fetch [--force] NAME
 hk delete [--force] NAME
+hk stop [--force] NAME
 hk list [-a|--all]
 
 --with-git-config imports only user.name and user.email into the guest repository.
 hk fetch imports committed branches from a running VM without changing your checkout.
---force skips only confirmation for uncommitted guest files, which remain in the VM.
-Ignored files and files outside the repository are excluded.`
+hk fetch --force skips only confirmation for uncommitted guest files, which remain in the VM.
+Ignored files and files outside the repository are excluded.
+hk stop --force abruptly stops the VM; buffered guest data may be lost.`
 
 type vmOperations struct {
+	stop   func(context.Context, string, bool) error
 	create func(context.Context, string, vm.CreateOptions) (*vm.Project, error)
 	attach func(string) error
 	delete func(context.Context, string, func() error) error
@@ -34,6 +37,7 @@ type vmOperations struct {
 
 func main() {
 	ops := vmOperations{
+		stop:   vm.Stop,
 		create: vm.Create,
 		attach: vm.Attach,
 		delete: vm.Delete,
@@ -66,6 +70,8 @@ func run(args []string, in io.Reader, out io.Writer, ops vmOperations) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	switch args[0] {
+	case "stop":
+		return runStop(ctx, args[1:], out, ops.stop)
 	case "list":
 		return runList(ctx, args[1:], out, ops.list)
 	case "create":

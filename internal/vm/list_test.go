@@ -364,3 +364,35 @@ func TestListMetadataDoesNotRegenerateIdentity(t *testing.T) {
 		t.Fatal("listing migrated identity")
 	}
 }
+
+func TestObserveStoppingStatus(t *testing.T) {
+	root := privateTempDir(t)
+	dir := makeVMDir(t, root, "vm")
+	child := startTestProcess(t, firecrackerArgs(dir))
+	state := child.state
+	var err error
+	state.BootID, err = hostBootID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.Stopping = true
+	for _, ready := range []bool{false, true} {
+		state.Ready = ready
+		if got := observeStatus(state, dir); got != "stopping" {
+			t.Errorf("active shutdown reported as %q with ready=%t", got, ready)
+		}
+	}
+}
+
+func TestListSkipsStorageBeingDeleted(t *testing.T) {
+	root := privateTempDir(t)
+	t.Setenv("HK_STATE_DIR", root)
+	dir := makeVMDir(t, root, ".deleting-vm-0123456789abcdef")
+	if err := saveRecord(dir, record{}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := List(t.Context(), true)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("listed storage being deleted: %+v, %v", rows, err)
+	}
+}

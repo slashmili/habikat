@@ -70,8 +70,8 @@ func TestFetchStateFailuresPreserveDisk(t *testing.T) {
 			root := privateTempDir(t)
 			t.Setenv("HK_STATE_DIR", root)
 			if kind == "missing" {
-				if _, err := openFetchSession(t.Context(), "demo"); err == nil {
-					t.Fatal("missing VM accepted")
+				if _, err := openFetchSession(t.Context(), "demo"); err == nil || !strings.Contains(err.Error(), "VM demo not found") {
+					t.Fatalf("missing VM: %v", err)
 				}
 				return
 			}
@@ -99,7 +99,7 @@ func TestFetchStateFailuresPreserveDisk(t *testing.T) {
 			}
 			if _, err := openFetchSession(t.Context(), "demo"); err == nil {
 				t.Fatal("unsuitable VM accepted")
-			} else if kind == "stopped" && (!strings.Contains(err.Error(), "running") || !strings.Contains(err.Error(), "preserved")) {
+			} else if kind == "stopped" && (!strings.Contains(err.Error(), "is stopped") || !strings.Contains(err.Error(), "preserved") || !strings.Contains(err.Error(), "previously fetched refs")) {
 				t.Fatalf("unclear stopped error: %v", err)
 			}
 			assertFileContents(t, filepath.Join(dir, "rootfs.ext4"), []byte("keep disk"))

@@ -140,19 +140,32 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, lock.Close()) }()
-	if len(filepath.Join(dir, "vsock.sock")) > 107 {
-		return errors.New("state path is too long for a Unix socket; choose a shorter HK_STATE_DIR")
+	defer func() {
+		if lock != nil {
+			result = errors.Join(result, lock.Close())
+		}
+	}()
+	if err := validateSocketPaths(dir); err != nil {
+		return err
 	}
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return fmt.Errorf("create VM directory (names must be unused): %w", err)
 	}
 	state := record{SourceDirectory: sourceDirectory}
+	operation, err := lockVMOperation(dir)
+	if err != nil {
+		return errors.Join(err, os.RemoveAll(dir))
+	}
+	defer operation.Close()
 	defer func() {
 		if result != nil {
 			result = errors.Join(result, cleanupFailedCreate(state, dir, name))
 		}
 	}()
+	state.Shutdown, err = imageShutdownCapability(images)
+	if err != nil {
+		return err
+	}
 	state.BootID, err = hostBootID()
 	if err != nil {
 		return err
@@ -164,6 +177,10 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 	if err := saveRecord(dir, state); err != nil {
 		return err
 	}
+	if err := lock.Close(); err != nil {
+		return err
+	}
+	lock = nil
 	if err := provisionKeys(dir, name); err != nil {
 		return err
 	}
@@ -178,15 +195,7 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 	if err := os.RemoveAll(filepath.Join(dir, "seed")); err != nil {
 		return err
 	}
-	config := map[string]any{
-		"boot-source":    map[string]any{"kernel_image_path": filepath.Join(images, "vmlinux"), "boot_args": "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/sbin/init"},
-		"machine-config": map[string]any{"vcpu_count": 1, "mem_size_mib": 256},
-		"drives": []map[string]any{
-			{"drive_id": "root", "path_on_host": filepath.Join(dir, "rootfs.ext4"), "is_root_device": true, "is_read_only": false},
-			{"drive_id": "seed", "path_on_host": filepath.Join(dir, "seed.ext4"), "is_root_device": false, "is_read_only": true},
-		},
-		"vsock": map[string]any{"guest_cid": 3, "uds_path": filepath.Join(dir, "vsock.sock")},
-	}
+	config := firecrackerConfig(images, dir)
 	data, err := json.Marshal(config)
 	if err != nil {
 		return err
@@ -249,7 +258,7 @@ func cleanupFailedCreate(state record, dir, name string) error {
 }
 
 func startDetachedFirecracker(ctx context.Context, images, configPath string, log *os.File) (int, error) {
-	cmd := exec.Command(filepath.Join(images, "firecracker"), "--no-api", "--config-file", configPath)
+	cmd := exec.Command(filepath.Join(images, "firecracker"), "--api-sock", filepath.Join(filepath.Dir(configPath), "api.sock"), "--config-file", configPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout, cmd.Stderr = log, log
@@ -291,21 +300,58 @@ func processOwnsConfig(pid int, dir string) (bool, error) {
 		return false, err
 	}
 	args := strings.Split(string(data), "\x00")
-	if len(args) != 5 || filepath.Base(args[0]) != "firecracker" {
+	if filepath.Base(args[0]) != "firecracker" {
 		return false, nil
 	}
-	return args[1] == "--no-api" && args[2] == "--config-file" && args[3] == filepath.Join(dir, "config.json"), nil
+	if len(args) == 5 {
+		return args[1] == "--no-api" && args[2] == "--config-file" && args[3] == filepath.Join(dir, "config.json"), nil
+	}
+	return len(args) == 6 && args[1] == "--api-sock" && args[2] == filepath.Join(dir, "api.sock") && args[3] == "--config-file" && args[4] == filepath.Join(dir, "config.json"), nil
 }
 
 func sameProcess(state record, dir string) bool {
 	if state.PID <= 0 || state.StartTime == "" {
 		return false
 	}
+	if state.BootID != "" {
+		boot, err := hostBootID()
+		if err != nil || boot != state.BootID {
+			return false
+		}
+	}
 	start, err := processStart(state.PID)
 	return err == nil && start == state.StartTime && ownsConfig(state.PID, dir)
 }
 
+func vmNotRunning(name, dir string, state record) error {
+	switch {
+	case !sameProcess(state, dir):
+		return fmt.Errorf("VM %s is stopped; starting a stopped VM is not supported yet; its disk, files, and keys are preserved", name)
+	case state.Stopping:
+		return fmt.Errorf("VM %s is shutting down", name)
+	case !state.Ready:
+		return fmt.Errorf("VM %s is still starting", name)
+	}
+	return nil
+}
+
 func stopProcess(state record, dir string) error {
+	if state.BootID != "" {
+		boot, err := hostBootID()
+		if err != nil {
+			return err
+		}
+		if boot != state.BootID {
+			processes, err := processesForVM(dir)
+			if err != nil {
+				return err
+			}
+			if len(processes) != 0 {
+				return errors.New("host boot identity conflicts with a live VM; state retained")
+			}
+			return nil
+		}
+	}
 	if state.PID == 0 || state.StartTime == "" {
 		entries, err := os.ReadDir("/proc")
 		if err != nil {
@@ -377,15 +423,22 @@ func deleteConfirmed(ctx context.Context, name string, confirm func() error, ins
 			result = errors.Join(result, lock.Close())
 		}
 	}()
-	state, err := readRecord(dir)
+	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	operation, err := lockVMOperation(dir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			if _, statErr := os.Lstat(dir); errors.Is(statErr, os.ErrNotExist) {
-				return nil
-			}
-		}
 		return err
 	}
+	defer operation.Close()
+	state, err := readRecord(dir)
+	if err != nil {
+		return err
+	}
+	if err := lock.Close(); err != nil {
+		return err
+	}
+	lock = nil
 	if confirm != nil {
 		changed, err := inspect(ctx, dir, state)
 		if err != nil {
@@ -405,10 +458,6 @@ func deleteConfirmed(ctx context.Context, name string, confirm func() error, ins
 		if err != nil {
 			return err
 		}
-		if err := lock.Close(); err != nil {
-			return err
-		}
-		lock = nil
 		if err := confirm(); err != nil {
 			return err
 		}
@@ -420,6 +469,10 @@ func deleteConfirmed(ctx context.Context, name string, confirm func() error, ins
 		if err != nil {
 			return err
 		}
+		if err := lock.Close(); err != nil {
+			return err
+		}
+		lock = nil
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -427,7 +480,43 @@ func deleteConfirmed(ctx context.Context, name string, confirm func() error, ins
 	if err := stop(state, dir); err != nil {
 		return err
 	}
-	return os.RemoveAll(dir)
+	processes, err := processesForVM(dir)
+	if err != nil {
+		return err
+	}
+	if len(processes) != 0 {
+		return errors.New("VM process is still alive; storage retained")
+	}
+	return discardVMStorage(ctx, name, dir)
+}
+
+const deletingPrefix = ".deleting-"
+
+var removeVMStorage = os.RemoveAll
+
+func discardVMStorage(ctx context.Context, name, dir string) error {
+	trash, err := moveVMStorageAside(ctx, name, dir)
+	if err != nil {
+		return err
+	}
+	if err := removeVMStorage(trash); err != nil {
+		return fmt.Errorf("remove storage of deleted VM %s at %s: %w", name, trash, err)
+	}
+	return nil
+}
+
+func moveVMStorageAside(ctx context.Context, name, dir string) (_ string, result error) {
+	_, lock, err := lockState(ctx, name)
+	if err != nil {
+		return "", err
+	}
+	defer func() { result = errors.Join(result, lock.Close()) }()
+	suffix, err := newInstanceID()
+	if err != nil {
+		return "", err
+	}
+	trash := filepath.Join(filepath.Dir(dir), deletingPrefix+name+"-"+suffix)
+	return trash, os.Rename(dir, trash)
 }
 
 func readUnchangedVM(dir string, original os.FileInfo, state record) (record, error) {

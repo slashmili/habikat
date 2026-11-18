@@ -56,7 +56,7 @@ func listDirectory(ctx context.Context, root *os.File, source string) ([]Listing
 			problems = errors.Join(problems, err)
 			break
 		}
-		if entry.Name() == ".lock" {
+		if entry.Name() == ".lock" || strings.HasPrefix(entry.Name(), deletingPrefix) {
 			continue
 		}
 		row, err := listEntry(root, entry.Name())
@@ -200,6 +200,9 @@ func observeStatus(state record, dir string) string {
 	}
 	if state.BootID != boot {
 		return "stopped"
+	}
+	if state.Stopping {
+		return "stopping"
 	}
 	if !state.Ready {
 		return "starting"

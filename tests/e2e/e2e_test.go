@@ -135,7 +135,7 @@ func assertGone(t *testing.T, pid int) {
 		if len(fields) == 0 || fields[0] != "Z" {
 			t.Fatalf("VM process %d is still live", pid)
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	} else if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, unix.ESRCH) {
 		t.Fatal(err)
 	}
 }

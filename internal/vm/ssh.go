@@ -112,8 +112,8 @@ func Attach(name string) error {
 		return err
 	}
 	state, err := readRecord(dir)
-	if err == nil && (!state.Ready || !sameProcess(state, dir)) {
-		err = errors.New("VM is not running and ready; delete it and create it again")
+	if err == nil {
+		err = vmNotRunning(name, dir, state)
 	}
 	err = errors.Join(err, lock.Close())
 	if err != nil {

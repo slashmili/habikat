@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -19,9 +20,22 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("HABIKAT_STOP_TEST_CHILD") != "" {
+		runStopTestChild()
+		os.Exit(0)
+	}
 	if os.Getenv("HABIKAT_VM_TEST_CHILD") == "1" {
+		var disk *os.File
+		if path := os.Getenv("HABIKAT_VM_TEST_DISK"); path != "" {
+			var err error
+			disk, err = os.OpenFile(path, os.O_RDWR, 0)
+			if err != nil {
+				os.Exit(2)
+			}
+		}
 		fmt.Fprintln(os.Stdout, "ready")
 		_, _ = io.Copy(io.Discard, os.Stdin)
+		runtime.KeepAlive(disk)
 		os.Exit(0)
 	}
 	os.Exit(m.Run())

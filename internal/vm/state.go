@@ -42,6 +42,8 @@ type Project struct {
 }
 
 type record struct {
+	Shutdown        string   `json:"shutdown,omitempty"`
+	Stopping        bool     `json:"stopping,omitempty"`
 	SourceDirectory string   `json:"source_directory,omitempty"`
 	BootID          string   `json:"boot_id,omitempty"`
 	InstanceID      string   `json:"instance_id,omitempty"`
@@ -127,16 +129,24 @@ func saveRecord(dir string, state record) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "state.tmp"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := os.CreateTemp(dir, ".state-*")
 	if err != nil {
 		return err
 	}
+	defer os.Remove(f.Name())
 	_, writeErr := f.Write(data)
 	err = errors.Join(writeErr, f.Sync(), f.Close())
 	if err != nil {
 		return err
 	}
-	return os.Rename(filepath.Join(dir, "state.tmp"), filepath.Join(dir, "state.json"))
+	if err := os.Rename(f.Name(), filepath.Join(dir, "state.json")); err != nil {
+		return err
+	}
+	directory, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	return errors.Join(directory.Sync(), directory.Close())
 }
 
 func readRecord(dir string) (record, error) {
@@ -167,6 +177,12 @@ func decodeRecord(data []byte) (record, error) {
 			return record{}, errors.New("ambiguous VM source directory")
 		}
 		state.SourceDirectory = string(stored.SourceDirectoryBytes)
+	}
+	if state.Shutdown != "" && state.Shutdown != shutdownCapability {
+		return record{}, errors.New("invalid VM shutdown capability")
+	}
+	if state.Stopping && state.PID == 0 {
+		return record{}, errors.New("invalid stopping VM process identity")
 	}
 	if state.PID < 0 || (state.PID != 0 && state.StartTime == "") || (state.Ready && state.PID == 0) {
 		return record{}, errors.New("invalid VM process identity")

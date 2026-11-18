@@ -20,6 +20,11 @@ func openFetchSession(ctx context.Context, name string) (_ *fetchSession, result
 		return nil, err
 	}
 	defer func() { result = errors.Join(result, lock.Close()) }()
+	operation, err := lockExistingVM(name, dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { result = errors.Join(result, operation.Close()) }()
 	state, err := readRecord(dir)
 	if err != nil {
 		return nil, fmt.Errorf("open VM %s for fetch: %w", name, err)
@@ -43,8 +48,8 @@ func openFetchSession(ctx context.Context, name string) (_ *fetchSession, result
 }
 
 func requireFetchSource(name, dir string, state record) error {
-	if !state.Ready || !sameProcess(state, dir) {
-		return fmt.Errorf("fetch needs the existing VM %s running and reachable; its disk and keys have been preserved; previously fetched refs remain usable", name)
+	if err := vmNotRunning(name, dir, state); err != nil {
+		return fmt.Errorf("fetch needs a running VM: %w; previously fetched refs remain usable", err)
 	}
 	if state.Project == nil {
 		return fmt.Errorf("VM %s has no imported project to fetch", name)
@@ -70,5 +75,5 @@ func (session *fetchSession) recheck() error {
 }
 
 func sameFetchIdentity(first, next record) bool {
-	return first.InstanceID == next.InstanceID && first.PID == next.PID && first.StartTime == next.StartTime && first.Project != nil && next.Project != nil && *first.Project == *next.Project
+	return first.InstanceID == next.InstanceID && first.PID == next.PID && first.StartTime == next.StartTime && first.BootID == next.BootID && first.Project != nil && next.Project != nil && *first.Project == *next.Project
 }

@@ -34,6 +34,83 @@ def download_artifact(artifact, cache):
     return path
 
 
+SHUTDOWN_CAPABILITY = "ctrl-alt-del-v1"
+
+
+def guest_files():
+    return {
+        "etc/passwd": "root:x:0:0:root:/root:/bin/sh\nhk:x:1000:1000:Habikat:/home/hk:/bin/sh\nsshd:x:22:22:sshd:/var/empty:/bin/false\n",
+        "etc/group": "root:x:0:\nhk:x:1000:\nsshd:x:22:\n",
+        "etc/shadow": "root:!:20000:0:99999:7:::\nhk:*:20000:0:99999:7:::\nsshd:!:20000:0:99999:7:::\n",
+        "etc/shells": "/bin/sh\n",
+        "etc/profile": "export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\nexport PS1='\\u@\\h:\\w\\$ '\n",
+        "etc/ssh/sshd_config": """HostKey /etc/ssh/host_key
+AuthorizedKeysFile .ssh/authorized_keys
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthenticationMethods publickey
+AllowUsers hk
+DisableForwarding yes
+PermitUserEnvironment no
+PrintMotd no
+UseDNS no
+PidFile /run/sshd.pid
+""",
+        "etc/inittab": "::sysinit:/etc/rcS\n::ctrlaltdel:/sbin/reboot\n::shutdown:/etc/rcShutdown\n::respawn:/usr/bin/socat VSOCK-LISTEN:22,reuseaddr,fork EXEC:'/usr/sbin/sshd -i -e'\n",
+        "etc/rcS": """#!/bin/sh
+set -eu
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs tmpfs /run
+mkdir -p /dev/pts /run/provision/seed /run/sshd
+chmod 700 /run/provision
+mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /tmp
+chmod 1777 /tmp
+mount -o ro /dev/vdb /run/provision/seed
+if [ ! -e /etc/hk-initialized ]; then
+    /etc/hk-first-boot
+fi
+hostname "$(cat /run/provision/seed/hostname)"
+""",
+        "etc/hk-first-boot": """#!/bin/sh
+set -eu
+chown -R 0:0 /bin /sbin /lib /usr /etc /var /root
+chown 0:0 / /home
+chmod 755 / /home
+chmod 700 /root
+mkdir -p /home/hk/.ssh
+cp /run/provision/seed/authorized_keys /home/hk/.ssh/authorized_keys
+cp /run/provision/seed/host_key /etc/ssh/host_key
+chown 1000:1000 /home/hk /home/hk/.ssh /home/hk/.ssh/authorized_keys
+chmod 700 /home/hk/.ssh
+chmod 600 /home/hk/.ssh/authorized_keys /etc/ssh/host_key
+touch /etc/hk-initialized
+""",
+        "etc/rcShutdown": """#!/bin/sh
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+for entry in /proc/[0-9]*; do
+    pid=${entry##*/}
+    [ "$pid" = 1 ] || [ "$pid" = "$$" ] || kill -TERM "$pid" 2>/dev/null || true
+done
+sleep 1
+for entry in /proc/[0-9]*; do
+    pid=${entry##*/}
+    [ "$pid" = 1 ] || [ "$pid" = "$$" ] || kill -KILL "$pid" 2>/dev/null || true
+done
+sync
+umount /run/provision/seed
+if ! mount -o remount,ro /dev/vda /; then
+    echo HABIKAT_SHUTDOWN_FAILED
+    while true; do sleep 60; done
+fi
+echo HABIKAT_SHUTDOWN_CLEAN
+""",
+    }
+
+
 def build():
     recipe = Path(__file__).resolve().parent
     cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
@@ -74,58 +151,17 @@ def build():
             (root / directory).mkdir(parents=True, exist_ok=True)
         for applet in ("sh", "mount", "mkdir", "chmod", "chown", "cp", "cat", "hostname", "id",
                        "ls", "pwd", "stty", "sleep", "touch", "rm", "uname", "ps", "grep", "env",
-                       "wc", "head", "tail", "find", "sync", "false", "true", "kill", "echo", "mv"):
+                       "wc", "head", "tail", "find", "sync", "false", "true", "kill", "echo", "mv", "umount"):
             dest = root / "bin" / applet
             if not dest.exists():
                 dest.symlink_to("busybox")
         (root / "sbin/init").symlink_to("../bin/busybox")
-        files = {
-            "etc/passwd": "root:x:0:0:root:/root:/bin/sh\nhk:x:1000:1000:Habikat:/home/hk:/bin/sh\nsshd:x:22:22:sshd:/var/empty:/bin/false\n",
-            "etc/group": "root:x:0:\nhk:x:1000:\nsshd:x:22:\n",
-            "etc/shadow": "root:!:20000:0:99999:7:::\nhk:*:20000:0:99999:7:::\nsshd:!:20000:0:99999:7:::\n",
-            "etc/shells": "/bin/sh\n",
-            "etc/profile": "export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\nexport PS1='\\u@\\h:\\w\\$ '\n",
-            "etc/ssh/sshd_config": """HostKey /etc/ssh/host_key
-AuthorizedKeysFile .ssh/authorized_keys
-PermitRootLogin no
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-AuthenticationMethods publickey
-AllowUsers hk
-DisableForwarding yes
-PermitUserEnvironment no
-PrintMotd no
-UseDNS no
-PidFile /run/sshd.pid
-""",
-            "etc/inittab": "::sysinit:/etc/rcS\n::respawn:/usr/bin/socat VSOCK-LISTEN:22,reuseaddr,fork EXEC:'/usr/sbin/sshd -i -e'\n",
-            "etc/rcS": """#!/bin/sh
-set -eu
-mount -t proc proc /proc
-mount -t sysfs sysfs /sys
-# The pinned kernel mounts devtmpfs before init.
-mkdir -p /dev/pts /run/provision/seed /run/sshd /home/hk/.ssh
-mount -t devpts devpts /dev/pts
-mount -t tmpfs tmpfs /tmp
-chmod 1777 /tmp
-# mkfs -d is unprivileged on the host; establish guest ownership before SSH.
-chown -R 0:0 /bin /sbin /lib /usr /etc /var /root /run
-chown 0:0 / /home
-chmod 755 / /home
-chmod 700 /root
-chmod 700 /run/provision
-mount -o ro /dev/vdb /run/provision/seed
-cp /run/provision/seed/authorized_keys /home/hk/.ssh/authorized_keys
-cp /run/provision/seed/host_key /etc/ssh/host_key
-hostname "$(cat /run/provision/seed/hostname)"
-chown -R 1000:1000 /home/hk
-chmod 700 /home/hk/.ssh
-chmod 600 /home/hk/.ssh/authorized_keys /etc/ssh/host_key
-""",
-        }
+        (root / "sbin/reboot").symlink_to("../bin/busybox")
+        (root / "etc/mtab").symlink_to("/proc/mounts")
+        files = guest_files()
         for name, data in files.items():
             (root / name).write_text(data)
-            (root / name).chmod(0o755 if name == "etc/rcS" else 0o644)
+            (root / name).chmod(0o755 if name in ("etc/rcS", "etc/hk-first-boot", "etc/rcShutdown") else 0o644)
         (root / "etc/shadow").chmod(0o600)
         # umask must not leave packaged parent directories inaccessible to hk.
         for directory, dirs, _ in os.walk(root):
@@ -141,6 +177,7 @@ chmod 600 /home/hk/.ssh/authorized_keys /etc/ssh/host_key
         (built / "firecracker").chmod(0o755)
         shutil.copyfile(cache / "vmlinux", built / "vmlinux")
         manifest = {name: digest(built / name) for name in ("firecracker", "vmlinux", "rootfs.ext4")}
+        manifest["shutdown"] = SHUTDOWN_CAPABILITY
         (built / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         shutil.copyfile(recipe / "artifacts.lock.json", built / "artifacts.lock.json")
         built.rename(output)

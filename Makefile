@@ -1,4 +1,4 @@
-.PHONY: build image test mutate fuzz test-cli fuzz-cli test-vm fuzz-vm fuzz-import fuzz-identity fuzz-fetch fuzz-list integration test-image property e2e
+.PHONY: build image test mutate fuzz test-cli fuzz-cli test-vm fuzz-vm fuzz-import fuzz-identity fuzz-fetch fuzz-list integration test-image property e2e fuzz-lifecycle
 
 export MUTATE_PATH ?= ./internal/repository
 export MUTATE_DIFF ?=
@@ -30,7 +30,7 @@ mutate:
 	fi; \
 	go tool gremlins unleash --config .gremlins.yaml --output "$$MUTATE_OUTPUT" "$$@" -- "$$MUTATE_PATH"
 
-fuzz: fuzz-cli fuzz-vm fuzz-import fuzz-identity fuzz-fetch fuzz-list
+fuzz: fuzz-cli fuzz-vm fuzz-import fuzz-identity fuzz-fetch fuzz-list fuzz-lifecycle
 
 test-cli:
 	go test -race ./cmd/hk
@@ -81,3 +81,7 @@ fuzz-list:
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzListContext$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzListRecordReadOnly$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzSourceDirectoryRoundTrip$$' -fuzztime=10s -parallel=2
+
+fuzz-lifecycle:
+	go test ./cmd/hk -run '^$$' -fuzz '^FuzzStopArgs$$' -fuzztime=10s -parallel=2
+	go test ./internal/vm -run '^$$' -fuzz '^FuzzStopPreservesData$$' -fuzztime=10s -parallel=2
