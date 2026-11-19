@@ -32,10 +32,6 @@ func openFetchSession(ctx context.Context, name string) (_ *fetchSession, result
 	if err := requireFetchSource(name, dir, state); err != nil {
 		return nil, err
 	}
-	state, err = ensureInstanceID(dir, state)
-	if err != nil {
-		return nil, err
-	}
 	pinned, err := os.Open(dir)
 	if err != nil {
 		return nil, err

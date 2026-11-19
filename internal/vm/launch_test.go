@@ -33,26 +33,24 @@ func TestSocketPathLimit(t *testing.T) {
 
 func TestImageShutdownCapability(t *testing.T) {
 	dir, manifest := imageFixture(t)
-	capability, err := imageShutdownCapability(dir)
-	if err != nil || capability != "" {
-		t.Fatalf("legacy image: %q %v", capability, err)
+	if _, err := verifyImages(dir); err != nil {
+		t.Fatalf("current image: %v", err)
 	}
-	manifest["shutdown"] = shutdownCapability
+	for _, capability := range []string{"", "unknown"} {
+		manifest["shutdown"] = capability
+		writeManifest(t, dir, manifest)
+		_, err := verifyImages(dir)
+		assertErrorContains(t, err, "graceful shutdown")
+	}
+	delete(manifest, "shutdown")
 	writeManifest(t, dir, manifest)
-	capability, err = imageShutdownCapability(dir)
-	if err != nil || capability != shutdownCapability {
-		t.Fatalf("new image: %q %v", capability, err)
-	}
-	manifest["shutdown"] = "unknown"
-	writeManifest(t, dir, manifest)
-	if _, err := imageShutdownCapability(dir); err == nil {
-		t.Fatal("unknown capability accepted")
-	}
+	_, err := verifyImages(dir)
+	assertErrorContains(t, err, "rebuild the image")
 }
 
 func TestImageLaunchArtifactsRecordsVerifiedDigests(t *testing.T) {
 	dir, manifest := imageFixture(t)
-	launch, err := imageLaunchArtifacts(dir)
+	image, err := verifyImages(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,20 +58,13 @@ func TestImageLaunchArtifactsRecordsVerifiedDigests(t *testing.T) {
 		Firecracker: artifactRef{Path: filepath.Join(dir, "firecracker"), SHA256: manifest["firecracker"]},
 		Kernel:      artifactRef{Path: filepath.Join(dir, "vmlinux"), SHA256: manifest["vmlinux"]},
 	}
-	if launch != want || !validLaunchArtifacts(launch) {
-		t.Fatalf("launch = %+v; want %+v", launch, want)
+	if image.launch != want || !validLaunchArtifacts(image.launch) {
+		t.Fatalf("launch = %+v; want %+v", image.launch, want)
 	}
-	if err := verifyLaunchArtifacts(launch); err != nil {
-		t.Fatal(err)
+	wantDisk := artifactRef{Path: filepath.Join(dir, "rootfs.ext4"), SHA256: manifest["rootfs.ext4"]}
+	if image.rootDisk != wantDisk {
+		t.Fatalf("root disk = %+v; want %+v", image.rootDisk, wantDisk)
 	}
-	delete(manifest, "rootfs.ext4")
-	writeManifest(t, dir, manifest)
-	if _, err := imageLaunchArtifacts(dir); err != nil {
-		t.Fatalf("launch artifacts must not depend on the base root disk: %v", err)
-	}
-	manifest["vmlinux"] = "short"
-	writeManifest(t, dir, manifest)
-	assertErrorContains(t, func() error { _, err := imageLaunchArtifacts(dir); return err }(), "vmlinux")
 }
 
 func TestWriteLaunchConfigReplacesStaleConfig(t *testing.T) {

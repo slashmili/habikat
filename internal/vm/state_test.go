@@ -2,12 +2,13 @@ package vm
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -179,13 +180,41 @@ func TestStateLockRelease(t *testing.T) {
 	}
 }
 
+func currentRecord(t *testing.T) record {
+	t.Helper()
+	boot, err := hostBootID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return record{
+		Launch: &launchArtifacts{
+			Firecracker: artifactRef{Path: "/images/firecracker", SHA256: strings.Repeat("a", 64)},
+			Kernel:      artifactRef{Path: "/images/vmlinux", SHA256: strings.Repeat("b", 64)},
+		},
+		SourceDirectory: "/source",
+		BootID:          boot,
+		InstanceID:      strings.Repeat("1", 32),
+	}
+}
+
+func currentRecordWith(t *testing.T, change func(*record)) record {
+	t.Helper()
+	state := currentRecord(t)
+	change(&state)
+	return state
+}
+
 func TestRecordRoundTrip(t *testing.T) {
 	dir := privateTempDir(t)
-	for _, want := range []record{{}, {PID: 42, StartTime: "12345"}, {PID: 42, StartTime: "67890", Ready: true}} {
+	for _, want := range []record{
+		currentRecord(t),
+		currentRecordWith(t, func(s *record) { s.PID, s.StartTime = 42, "12345" }),
+		currentRecordWith(t, func(s *record) { s.PID, s.StartTime, s.Ready = 42, "67890", true }),
+	} {
 		if err := saveRecord(dir, want); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := readRecord(dir); err != nil || got != want {
+		if got, err := readRecord(dir); err != nil || !reflect.DeepEqual(got, want) {
 			t.Fatalf("readRecord() = %+v, %v; want %+v", got, err, want)
 		}
 		info, err := os.Stat(filepath.Join(dir, "state.json"))
@@ -199,25 +228,158 @@ func TestRecordRoundTrip(t *testing.T) {
 }
 
 func TestRecordRejectsCorruption(t *testing.T) {
-	for _, tc := range []struct{ name, data, want string }{
-		{name: "syntax", data: "{", want: "read VM state:"},
-		{name: "null", data: "null", want: "read VM state: expected an object"},
-		{name: "array", data: "[]", want: "read VM state:"},
-		{name: "pid type", data: `{"pid":"42"}`, want: "read VM state:"},
-		{name: "negative pid", data: `{"pid":-1}`, want: "invalid VM process identity"},
-		{name: "missing start", data: `{"pid":42}`, want: "invalid VM process identity"},
-		{name: "ready without pid", data: `{"ready":true}`, want: "invalid VM process identity"},
+	for _, tc := range []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{name: "syntax", data: []byte("{"), want: "read VM state:"},
+		{name: "null", data: []byte("null"), want: "read VM state: expected an object"},
+		{name: "array", data: []byte("[]"), want: "read VM state:"},
+		{name: "pid type", data: currentRecordJSON(t, `{"pid":"42"}`), want: "read VM state:"},
+		{name: "negative pid", data: currentRecordJSON(t, `{"pid":-1}`), want: "invalid VM process identity"},
+		{name: "missing start", data: currentRecordJSON(t, `{"pid":42}`), want: "invalid VM process identity"},
+		{name: "start without pid", data: currentRecordJSON(t, `{"start_time":"123"}`), want: "invalid VM process identity"},
+		{name: "nondecimal start", data: currentRecordJSON(t, `{"pid":42,"start_time":"1a"}`), want: "invalid VM process identity"},
+		{name: "overflowing start", data: currentRecordJSON(t, `{"pid":42,"start_time":"18446744073709551616"}`), want: "invalid VM process identity"},
+		{name: "ready without pid", data: currentRecordJSON(t, `{"ready":true}`), want: "invalid VM process identity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := privateTempDir(t)
 			path := filepath.Join(dir, "state.json")
-			writeTestFile(t, path, []byte(tc.data))
+			writeTestFile(t, path, tc.data)
 			got, err := readRecord(dir)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || got != (record{}) {
 				t.Fatalf("readRecord() = %+v, %v; want %q", got, err, tc.want)
 			}
-			assertFileContents(t, path, []byte(tc.data))
+			assertFileContents(t, path, tc.data)
 		})
+	}
+}
+
+func TestRecordRejectsIncompleteOrOutdatedState(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(map[string]any)
+	}{
+		{"unversioned record", func(m map[string]any) { delete(m, "version") }},
+		{"unknown version", func(m map[string]any) { m["version"] = currentRecordVersion + 1 }},
+		{"null version", func(m map[string]any) { m["version"] = nil }},
+		{"missing instance", func(m map[string]any) { delete(m, "instance_id") }},
+		{"missing boot", func(m map[string]any) { delete(m, "boot_id") }},
+		{"missing launch", func(m map[string]any) { delete(m, "launch") }},
+		{"null launch", func(m map[string]any) { m["launch"] = nil }},
+		{"missing source directory", func(m map[string]any) { delete(m, "source_directory") }},
+		{"missing pid", func(m map[string]any) { delete(m, "pid") }},
+		{"null pid", func(m map[string]any) { m["pid"] = nil }},
+		{"missing start time", func(m map[string]any) { delete(m, "start_time") }},
+		{"null start time", func(m map[string]any) { m["start_time"] = nil }},
+		{"missing ready", func(m map[string]any) { delete(m, "ready") }},
+		{"null ready", func(m map[string]any) { m["ready"] = nil }},
+		{"retired shutdown field", func(m map[string]any) { m["shutdown"] = "ctrl-alt-del-v1" }},
+		{"unknown field", func(m map[string]any) { m["recovered"] = true }},
+		{"minimal record", func(m map[string]any) { clear(m); m["pid"], m["start_time"], m["ready"] = 0, "", false }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := encodeRecord(currentRecord(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(data, &fields); err != nil {
+				t.Fatal(err)
+			}
+			tc.edit(fields)
+			data, err = json.Marshal(fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := privateTempDir(t)
+			writeTestFile(t, filepath.Join(dir, "state.json"), data)
+			got, err := readRecord(dir)
+			if err == nil || !strings.Contains(err.Error(), "unsupported or corrupt VM state") || !reflect.DeepEqual(got, record{}) {
+				t.Fatalf("readRecord() = %+v, %v; want unsupported state error", got, err)
+			}
+			assertFileContents(t, filepath.Join(dir, "state.json"), data)
+		})
+	}
+}
+
+func TestRecordRejectsAmbiguousJSONKeys(t *testing.T) {
+	valid := string(currentRecordJSON(t, `{"pid":42,"start_time":"123","ready":false}`))
+	for _, tc := range []struct {
+		name        string
+		original    string
+		replacement string
+		want        string
+	}{
+		{"duplicate version", "{", `{"version":0,`, "duplicate"},
+		{"duplicate null version", "{", `{"version":null,`, "duplicate"},
+		{"duplicate ready", `"ready":false`, `"ready":false,"ready":true`, "duplicate"},
+		{"case variant ready", `"ready":false`, `"ready":false,"READY":true`, "unknown"},
+		{"duplicate nested path", `"path":"/images/firecracker"`, `"path":"/other/firecracker","path":"/images/firecracker"`, "duplicate"},
+		{"case variant nested path", `"path":"/images/firecracker"`, `"PATH":"/images/firecracker"`, "unknown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := strings.Replace(valid, tc.original, tc.replacement, 1)
+			if data == valid {
+				t.Fatal("fixture did not change")
+			}
+			got, err := decodeRecord([]byte(data))
+			if err == nil || !strings.Contains(err.Error(), tc.want) || got != (record{}) {
+				t.Fatalf("decodeRecord() = %+v, %v; want %q error", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func currentRecordJSON(t *testing.T, overrides string, removed ...string) []byte {
+	t.Helper()
+	var changes map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(overrides), &changes); err != nil {
+		t.Fatal(err)
+	}
+	data := recordWithoutField(t, currentRecord(t), removed...)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	maps.Copy(fields, changes)
+	data, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func recordWithoutField(t *testing.T, state record, removed ...string) []byte {
+	t.Helper()
+	data, err := encodeRecord(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range removed {
+		delete(fields, field)
+	}
+	data, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func TestRecordAcceptsNonUTF8SourceDirectory(t *testing.T) {
+	dir := privateTempDir(t)
+	want := currentRecordWith(t, func(s *record) { s.SourceDirectory = "/source/\xff" })
+	if err := saveRecord(dir, want); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := readRecord(dir); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("readRecord() = %+v, %v; want %+v", got, err, want)
 	}
 }
 
@@ -225,7 +387,8 @@ func TestRecordRejectsInvalidInstanceID(t *testing.T) {
 	for _, id := range []string{"../outside", "AABB", strings.Repeat("g", 32), strings.Repeat("a", 31), strings.Repeat("a", 33), "a\n"} {
 		t.Run(id, func(t *testing.T) {
 			dir := privateTempDir(t)
-			data, err := json.Marshal(map[string]string{"instance_id": id})
+			state := currentRecordWith(t, func(s *record) { s.InstanceID = id })
+			data, err := encodeRecord(state)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -237,8 +400,30 @@ func TestRecordRejectsInvalidInstanceID(t *testing.T) {
 	}
 }
 
+func currentRecordSeed(f *testing.F, source string) string {
+	f.Helper()
+	data, err := encodeRecord(record{
+		Launch: &launchArtifacts{
+			Firecracker: artifactRef{Path: "/images/firecracker", SHA256: strings.Repeat("a", 64)},
+			Kernel:      artifactRef{Path: "/images/vmlinux", SHA256: strings.Repeat("b", 64)},
+		},
+		SourceDirectory: source,
+		BootID:          "01234567-89ab-cdef-0123-456789abcdef",
+		InstanceID:      strings.Repeat("1", 32),
+	})
+	if err != nil {
+		f.Fatal(err)
+	}
+	return string(data)
+}
+
 func FuzzReadRecord(f *testing.F) {
-	for _, data := range []string{`{}`, `null`, `{`, `{"pid":-1}`, `{"pid":5,"start_time":"123","ready":true}`, `{"instance_id":"0123456789abcdef0123456789abcdef"}`, `{"instance_id":"../bad"}`} {
+	stopped := currentRecordSeed(f, "/source")
+	for _, start := range []string{"0", "18446744073709551615", "18446744073709551616", "1a", ""} {
+		live := strings.Replace(stopped, `"pid":0,"start_time":""`, `"pid":5,"start_time":`+strconv.Quote(start), 1)
+		f.Add([]byte(live))
+	}
+	for _, data := range []string{stopped, `{}`, `null`, `{`, `{"pid":-1}`, `{"pid":0,"start_time":"","ready":false}`, `{"pid":5,"start_time":"123","ready":true}`, `{"instance_id":"0123456789abcdef0123456789abcdef"}`, `{"instance_id":"../bad"}`} {
 		f.Add([]byte(data))
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -246,11 +431,13 @@ func FuzzReadRecord(f *testing.F) {
 			t.Skip()
 		}
 		dir := privateTempDir(t)
-		valid := record{PID: len(data) + 1, StartTime: "1" + hex.EncodeToString(data), Ready: len(data)%2 == 0}
+		valid := currentRecordWith(t, func(s *record) {
+			s.PID, s.StartTime, s.Ready = len(data)+1, strconv.Itoa(len(data)), len(data)%2 == 0
+		})
 		if err := saveRecord(dir, valid); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := readRecord(dir); err != nil || got != valid {
+		if got, err := readRecord(dir); err != nil || !reflect.DeepEqual(got, valid) {
 			t.Fatalf("generated valid record = %+v, %v; want %+v", got, err, valid)
 		}
 		writeTestFile(t, filepath.Join(dir, "state.json"), data)
@@ -265,11 +452,14 @@ func FuzzReadRecord(f *testing.F) {
 		if err := json.Unmarshal(data, &object); err != nil || object == nil {
 			t.Fatalf("accepted non-object state %q", data)
 		}
-		if got.PID < 0 || (got.PID > 0 && got.StartTime == "") || (got.Ready && got.PID == 0) {
+		if !validProcessIdentity(got) {
 			t.Fatalf("accepted invalid process identity: %+v", got)
 		}
-		if got.InstanceID != "" && !validInstanceID.MatchString(got.InstanceID) {
-			t.Fatal("accepted invalid instance identifier")
+		if !validInstanceID.MatchString(got.InstanceID) || !validBootID.MatchString(got.BootID) {
+			t.Fatal("accepted record without valid instance and boot identities")
+		}
+		if got.Launch == nil || !validLaunchArtifacts(*got.Launch) || !validAbsolutePath(got.SourceDirectory) {
+			t.Fatal("accepted record without valid launch artifacts and source directory")
 		}
 		if err := saveRecord(dir, got); err != nil {
 			t.Fatal(err)

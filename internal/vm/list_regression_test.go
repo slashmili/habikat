@@ -17,7 +17,7 @@ import (
 
 func TestReadRecordRejectsMalformedBootIdentity(t *testing.T) {
 	dir := privateTempDir(t)
-	writeTestFile(t, filepath.Join(dir, "state.json"), []byte(`{"boot_id":"invalid"}`))
+	writeTestFile(t, filepath.Join(dir, "state.json"), currentRecordJSON(t, `{"boot_id":"invalid"}`))
 	if _, err := readRecord(dir); err == nil || !strings.Contains(err.Error(), "invalid VM host boot identity") {
 		t.Fatalf("malformed boot identity accepted: %v", err)
 	}
@@ -40,7 +40,7 @@ func (c *cancelAfterTwoEntries) Err() error {
 func TestListCanceledPartialInventoryIsSorted(t *testing.T) {
 	root := privateTempDir(t)
 	for _, name := range []string{"zeta", "alpha", "omega"} {
-		if err := saveRecord(makeVMDir(t, root, name), record{}); err != nil {
+		if err := saveRecord(makeVMDir(t, root, name), currentRecord(t)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -72,7 +72,7 @@ func TestListPrivateDirectoryAndSizeBoundaries(t *testing.T) {
 			root := privateTempDir(t)
 			t.Setenv("HK_STATE_DIR", root)
 			dir := makeVMDir(t, root, "fixture")
-			if err := saveRecord(dir, record{}); err != nil {
+			if err := saveRecord(dir, currentRecord(t)); err != nil {
 				t.Fatal(err)
 			}
 			switch kind {
@@ -102,7 +102,7 @@ func TestListDoesNotWaitForLifecycleLockOrReadFIFOKey(t *testing.T) {
 	root := privateTempDir(t)
 	t.Setenv("HK_STATE_DIR", root)
 	dir := makeVMDir(t, root, "fixture")
-	if err := saveRecord(dir, record{}); err != nil {
+	if err := saveRecord(dir, currentRecord(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err := unix.Mkfifo(filepath.Join(dir, "identity"), 0600); err != nil {
@@ -146,7 +146,7 @@ func FuzzSourceDirectoryRoundTrip(f *testing.F) {
 			t.Fatalf("discovery changed bytes: %q != %q", source, path)
 		}
 		dir := privateTempDir(t)
-		if err := saveRecord(dir, record{SourceDirectory: source}); err != nil {
+		if err := saveRecord(dir, currentRecordWith(t, func(s *record) { s.SourceDirectory = source })); err != nil {
 			t.Fatal(err)
 		}
 		state, err := readRecord(dir)
@@ -161,19 +161,24 @@ func FuzzSourceDirectoryRoundTrip(f *testing.F) {
 }
 
 func TestSourceDirectoryByteEncoding(t *testing.T) {
+	bytesOnly := func(encoded string) []byte {
+		return currentRecordJSON(t, `{"source_directory_bytes":"`+encoded+`"}`, "source_directory")
+	}
 	for _, tc := range []struct {
-		name, raw, want string
-		invalid         bool
+		name    string
+		raw     []byte
+		want    string
+		invalid bool
 	}{
-		{name: "byte path", raw: `{"source_directory_bytes":"L3dvcmsv/w=="}`, want: "/work/\xff"},
-		{name: "conflicting paths", raw: `{"source_directory":"/other","source_directory_bytes":"L3dvcmsv/w=="}`, invalid: true},
-		{name: "bad base64", raw: `{"source_directory_bytes":"!"}`, invalid: true},
-		{name: "relative bytes", raw: `{"source_directory_bytes":"Li4vZXNjYXBl"}`, invalid: true},
-		{name: "nul bytes", raw: `{"source_directory_bytes":"LwA="}`, invalid: true},
-		{name: "invalid JSON UTF8", raw: "{\"source_directory\":\"/work/\xff\"}", invalid: true},
+		{name: "byte path", raw: bytesOnly("L3dvcmsv/w=="), want: "/work/\xff"},
+		{name: "conflicting paths", raw: currentRecordJSON(t, `{"source_directory":"/other","source_directory_bytes":"L3dvcmsv/w=="}`), invalid: true},
+		{name: "bad base64", raw: bytesOnly("!"), invalid: true},
+		{name: "relative bytes", raw: bytesOnly("Li4vZXNjYXBl"), invalid: true},
+		{name: "nul bytes", raw: bytesOnly("LwA="), invalid: true},
+		{name: "invalid JSON UTF8", raw: []byte("{\"source_directory\":\"/work/\xff\"}"), invalid: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			state, err := decodeRecord([]byte(tc.raw))
+			state, err := decodeRecord(tc.raw)
 			if (err != nil) != tc.invalid || state.SourceDirectory != tc.want {
 				t.Fatalf("state=%+v error=%v", state, err)
 			}
@@ -199,7 +204,7 @@ func TestReadListedRecordAfterDirectoryRemoval(t *testing.T) {
 			}
 			if replacement {
 				makeVMDir(t, root, "fixture")
-				if err := saveRecord(dir, record{SourceDirectory: "/replacement"}); err != nil {
+				if err := saveRecord(dir, currentRecordWith(t, func(s *record) { s.SourceDirectory = "/replacement" })); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -228,7 +233,7 @@ func TestListRejectsMalformedBootIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	good := makeVMDir(t, root, "good")
-	if err := saveRecord(good, record{}); err != nil {
+	if err := saveRecord(good, currentRecord(t)); err != nil {
 		t.Fatal(err)
 	}
 	before := listStateSnapshot(t, root)
@@ -246,14 +251,14 @@ func TestListDuringAtomicRecordReplacement(t *testing.T) {
 	root := privateTempDir(t)
 	t.Setenv("HK_STATE_DIR", root)
 	dir := makeVMDir(t, root, "fixture")
-	if err := saveRecord(dir, record{SourceDirectory: "/first"}); err != nil {
+	if err := saveRecord(dir, currentRecordWith(t, func(s *record) { s.SourceDirectory = "/first" })); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	go func() {
 		for i := range 100 {
 			source := []string{"/first", "/second"}[i%2]
-			if err := saveRecord(dir, record{SourceDirectory: source}); err != nil {
+			if err := saveRecord(dir, currentRecordWith(t, func(s *record) { s.SourceDirectory = source })); err != nil {
 				done <- err
 				return
 			}

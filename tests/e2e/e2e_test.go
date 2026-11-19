@@ -127,6 +127,20 @@ func vmPID(t *testing.T, path string) int {
 	return state.PID
 }
 
+func clearPublishedProcess(t *testing.T, path string) {
+	t.Helper()
+	var state map[string]any
+	if err := json.Unmarshal(read(t, path), &state); err != nil {
+		t.Fatal(err)
+	}
+	state["pid"], state["start_time"], state["ready"] = 0, "", false
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, path, data)
+}
+
 func assertGone(t *testing.T, pid int) {
 	t.Helper()
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
@@ -213,7 +227,7 @@ exit
 	// Simulate the persisted record at the small crash window after spawn and
 	// before PID publication. Recovery must find only this VM's config path.
 	pid = vmPID(t, h.state("one", "state.json"))
-	write(t, h.state("one", "state.json"), []byte(`{"pid":0,"start_time":"","ready":false}`))
+	clearPublishedProcess(t, h.state("one", "state.json"))
 	h.must("", "delete", "--force", "one")
 	assertGone(t, pid)
 	h.must("echo STILL_RUNNING\nexit\n", "attach", "two")

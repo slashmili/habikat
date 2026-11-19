@@ -81,12 +81,12 @@ func TestRunListInvalidInputHasNoEffects(t *testing.T) {
 func TestRunListPreservesRowsOnError(t *testing.T) {
 	var out bytes.Buffer
 	err := runList(t.Context(), nil, &out, func(context.Context, bool) ([]vm.Listing, error) {
-		return []vm.Listing{{Name: "valid", Status: "stopped"}}, errors.New("broken\n\x1b[2J\tmetadata")
+		return []vm.Listing{{Name: "valid", Status: "stopped", Directory: "/work/valid"}}, errors.New("broken\n\x1b[2J\tmetadata")
 	})
 	if err == nil || strings.ContainsAny(err.Error(), "\n\t\x1b") {
 		t.Fatalf("unsafe diagnostic=%v", err)
 	}
-	if !strings.Contains(out.String(), "valid") || !strings.Contains(out.String(), "(unknown)") {
+	if !strings.Contains(out.String(), "valid") || !strings.Contains(out.String(), "/work/valid") {
 		t.Fatalf("valid row discarded: %q", out.String())
 	}
 }

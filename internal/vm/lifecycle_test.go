@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -67,7 +68,7 @@ func TestImageDir(t *testing.T) {
 
 func TestImageVerification(t *testing.T) {
 	dir, _ := imageFixture(t)
-	if err := verifyImages(dir); err != nil {
+	if _, err := verifyImages(dir); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -77,16 +78,18 @@ func TestImageVerificationRejectsArtifactChanges(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir, manifest := imageFixture(t)
 			writeTestFile(t, filepath.Join(dir, name), []byte("corrupted"))
-			assertErrorContains(t, verifyImages(dir), "SHA-256 mismatch for "+name)
+			_, err := verifyImages(dir)
+			assertErrorContains(t, err, "SHA-256 mismatch for "+name)
 			if err := os.Remove(filepath.Join(dir, name)); err != nil {
 				t.Fatal(err)
 			}
-			if err := verifyImages(dir); !errors.Is(err, os.ErrNotExist) {
+			if _, err := verifyImages(dir); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("missing artifact error = %v", err)
 			}
 			delete(manifest, name)
 			writeManifest(t, dir, manifest)
-			assertErrorContains(t, verifyImages(dir), "missing SHA-256 for "+name)
+			_, err = verifyImages(dir)
+			assertErrorContains(t, err, "missing SHA-256 for "+name)
 		})
 	}
 }
@@ -103,7 +106,8 @@ func TestImageVerificationRejectsManifest(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir, _ := imageFixture(t)
 			writeTestFile(t, filepath.Join(dir, "manifest.json"), []byte(tc.data))
-			assertErrorContains(t, verifyImages(dir), tc.want)
+			_, err := verifyImages(dir)
+			assertErrorContains(t, err, tc.want)
 		})
 	}
 }
@@ -122,7 +126,7 @@ func FuzzImageIntegrity(f *testing.F) {
 		hash := sha256.Sum256(data)
 		manifest[name] = hex.EncodeToString(hash[:])
 		writeManifest(t, dir, manifest)
-		if err := verifyImages(dir); err != nil {
+		if _, err := verifyImages(dir); err != nil {
 			t.Fatalf("valid artifact rejected: %v", err)
 		}
 		changed := append([]byte(nil), data...)
@@ -132,7 +136,8 @@ func FuzzImageIntegrity(f *testing.F) {
 			changed[int(selected)%len(changed)] ^= 1
 		}
 		writeTestFile(t, filepath.Join(dir, name), changed)
-		assertErrorContains(t, verifyImages(dir), "SHA-256 mismatch for "+name)
+		_, err := verifyImages(dir)
+		assertErrorContains(t, err, "SHA-256 mismatch for "+name)
 	})
 }
 
@@ -146,6 +151,7 @@ func imageFixture(t *testing.T) (string, map[string]string) {
 		hash := sha256.Sum256(data)
 		manifest[name] = hex.EncodeToString(hash[:])
 	}
+	manifest["shutdown"] = shutdownCapability
 	writeManifest(t, dir, manifest)
 	return dir, manifest
 }
@@ -323,7 +329,7 @@ func TestDeleteStateOrdersCleanup(t *testing.T) {
 	dir := makeVMDir(t, root, "vm")
 	sibling := makeVMDir(t, root, "other")
 	writeTestFile(t, filepath.Join(sibling, "disk"), []byte("other VM"))
-	state := record{PID: 42, StartTime: "123", Ready: true}
+	state := currentRecordWith(t, func(s *record) { s.PID, s.StartTime, s.Ready = 42, "123", true })
 	if err := saveRecord(dir, state); err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +339,7 @@ func TestDeleteStateOrdersCleanup(t *testing.T) {
 		calls := 0
 		stop := func(got record, path string) error {
 			calls++
-			if got != state || path != dir {
+			if !reflect.DeepEqual(got, state) || path != dir {
 				t.Fatalf("stop received %+v, %q", got, path)
 			}
 			assertFileContents(t, filepath.Join(dir, "disk"), []byte("keep until stopped"))
@@ -376,7 +382,7 @@ func makeVMDir(t *testing.T, root, name string) string {
 }
 
 func firecrackerArgs(dir string) []string {
-	return []string{"firecracker", "--no-api", "--config-file", filepath.Join(dir, "config.json")}
+	return []string{"firecracker", "--api-sock", filepath.Join(dir, "api.sock"), "--config-file", filepath.Join(dir, "config.json")}
 }
 
 type testProcess struct {
@@ -427,7 +433,7 @@ func startTestProcess(t *testing.T, args []string) *testProcess {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child.state = record{PID: cmd.Process.Pid, StartTime: start, Ready: true}
+	child.state = currentRecordWith(t, func(s *record) { s.PID, s.StartTime, s.Ready = cmd.Process.Pid, start, true })
 	return child
 }
 
@@ -477,7 +483,7 @@ func TestDeleteConfirmationInstanceAndLock(t *testing.T) {
 			dir := filepath.Join(root, "vm")
 			if kind != "missing" {
 				makeVMDir(t, root, "vm")
-				if err := saveRecord(dir, record{}); err != nil {
+				if err := saveRecord(dir, currentRecord(t)); err != nil {
 					t.Fatal(err)
 				}
 				writeTestFile(t, filepath.Join(dir, "disk"), []byte("valuable"))
@@ -498,12 +504,12 @@ func TestDeleteConfirmationInstanceAndLock(t *testing.T) {
 						t.Fatal(err)
 					}
 					makeVMDir(t, root, "vm")
-					if err := saveRecord(dir, record{}); err != nil {
+					if err := saveRecord(dir, currentRecord(t)); err != nil {
 						t.Fatal(err)
 					}
 					writeTestFile(t, filepath.Join(dir, "disk"), []byte("valuable"))
 				case "identity":
-					if err := saveRecord(dir, record{PID: 42, StartTime: "replacement"}); err != nil {
+					if err := saveRecord(dir, currentRecordWith(t, func(s *record) { s.PID, s.StartTime = 42, "123" })); err != nil {
 						t.Fatal(err)
 					}
 				}

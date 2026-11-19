@@ -16,45 +16,32 @@ import (
 	"time"
 )
 
-func TestStopRecoversUnpublishedAndLegacyProcess(t *testing.T) {
-	for _, kind := range []string{"legacy", "unpublished"} {
-		t.Run(kind, func(t *testing.T) {
-			root := privateTempDir(t)
-			t.Setenv("HK_STATE_DIR", root)
-			dir := makeVMDir(t, root, "vm")
-			disk := filepath.Join(dir, "rootfs.ext4")
-			writeTestFile(t, disk, []byte("durable fixture"))
-			t.Setenv("HABIKAT_VM_TEST_DISK", disk)
-			child := startTestProcess(t, firecrackerArgs(dir))
-			state := child.state
-			if kind == "unpublished" {
-				state.PID, state.StartTime, state.Ready = 0, "", false
-				var err error
-				state.BootID, err = hostBootID()
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err := saveRecord(dir, state); err != nil {
-				t.Fatal(err)
-			}
-			assertErrorContains(t, Stop(t.Context(), "vm", false), "does not support graceful shutdown")
-			child.assertAlive(t)
-			if err := Stop(t.Context(), "vm", true); err != nil {
-				t.Fatal(err)
-			}
-			child.assertKilled(t)
-			assertFileContents(t, disk, []byte("durable fixture"))
-			stopped, err := readRecord(dir)
-			if err != nil || stopped.PID != 0 || stopped.InstanceID == "" {
-				t.Fatalf("invalid recovery state: %+v %v", stopped, err)
-			}
-		})
+func TestStopRecoversUnpublishedProcess(t *testing.T) {
+	root := privateTempDir(t)
+	t.Setenv("HK_STATE_DIR", root)
+	dir := makeVMDir(t, root, "vm")
+	disk := filepath.Join(dir, "rootfs.ext4")
+	writeTestFile(t, disk, []byte("durable fixture"))
+	t.Setenv("HABIKAT_VM_TEST_DISK", disk)
+	child := startTestProcess(t, firecrackerArgs(dir))
+	state := child.state
+	state.PID, state.StartTime, state.Ready = 0, "", false
+	if err := saveRecord(dir, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := Stop(t.Context(), "vm", true); err != nil {
+		t.Fatal(err)
+	}
+	child.assertKilled(t)
+	assertFileContents(t, disk, []byte("durable fixture"))
+	stopped, err := readRecord(dir)
+	if err != nil || stopped.PID != 0 || stopped.InstanceID != state.InstanceID {
+		t.Fatalf("invalid recovery state: %+v %v", stopped, err)
 	}
 }
 
 func TestStopRejectsUnverifiedUnpublishedProcess(t *testing.T) {
-	dir, child, state := stopProcessFixture(t, false, false)
+	dir, child, state := stopProcessFixture(t, false)
 	state.PID, state.StartTime, state.Ready = 0, "", false
 	if err := saveRecord(dir, state); err != nil {
 		t.Fatal(err)
@@ -67,7 +54,7 @@ func TestStopRejectsUnverifiedUnpublishedProcess(t *testing.T) {
 }
 
 func TestStopRejectsMultipleWriters(t *testing.T) {
-	dir, child, state := stopFixture(t, true)
+	dir, child, state := stopFixture(t)
 	other := startTestProcess(t, firecrackerArgs(dir))
 	if err := Stop(t.Context(), "vm", true); err == nil {
 		t.Fatal("ambiguous process set accepted")
@@ -78,7 +65,7 @@ func TestStopRejectsMultipleWriters(t *testing.T) {
 }
 
 func TestStopRetainsConflictingSocketFile(t *testing.T) {
-	dir, child, state := stopFixture(t, true)
+	dir, child, state := stopFixture(t)
 	socket := filepath.Join(dir, "api.sock")
 	writeTestFile(t, socket, []byte("unrelated"))
 	if err := Stop(t.Context(), "vm", false); err == nil {
@@ -119,7 +106,7 @@ func TestStopToleratesUnrelatedProcessExit(t *testing.T) {
 	root := privateTempDir(t)
 	t.Setenv("HK_STATE_DIR", root)
 	dir := makeVMDir(t, root, "vm")
-	if err := saveRecord(dir, record{}); err != nil {
+	if err := saveRecord(dir, currentRecord(t)); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)

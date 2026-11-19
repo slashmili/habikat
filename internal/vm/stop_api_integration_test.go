@@ -37,9 +37,6 @@ func startStopFixture(t *testing.T, mode string) (string, *testProcess) {
 	}
 	cmd := exec.Command(exe)
 	cmd.Args = []string{"firecracker", "--api-sock", filepath.Join(dir, "api.sock"), "--config-file", filepath.Join(dir, "config.json")}
-	if mode == "legacy" {
-		cmd.Args = firecrackerArgs(dir)
-	}
 	cmd.Env = append(os.Environ(), "HABIKAT_STOP_TEST_CHILD="+mode, "HABIKAT_STOP_TEST_DIR="+dir, "GORACE=atexit_sleep_ms=0")
 	input, err := cmd.StdinPipe()
 	if err != nil {
@@ -65,11 +62,7 @@ func startStopFixture(t *testing.T, mode string) (string, *testProcess) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	boot, err := hostBootID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	child.state = record{PID: cmd.Process.Pid, StartTime: start, BootID: boot, Ready: true, InstanceID: strings.Repeat("a", 32), Shutdown: shutdownCapability}
+	child.state = currentRecordWith(t, func(s *record) { s.PID, s.StartTime, s.Ready = cmd.Process.Pid, start, true })
 	if err := saveRecord(dir, child.state); err != nil {
 		t.Fatal(err)
 	}

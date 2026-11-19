@@ -62,7 +62,7 @@ func TestDeleteChangeCheck(t *testing.T) {
 			dir := filepath.Join(root, "vm")
 			if !tc.missing {
 				makeVMDir(t, root, "vm")
-				if err := saveRecord(dir, record{}); err != nil {
+				if err := saveRecord(dir, currentRecord(t)); err != nil {
 					t.Fatal(err)
 				}
 				writeTestFile(t, filepath.Join(dir, "disk"), []byte("keep"))

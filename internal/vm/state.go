@@ -1,15 +1,18 @@
 package vm
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -53,20 +56,22 @@ type launchArtifacts struct {
 
 type record struct {
 	Creating        bool             `json:"creating,omitempty"`
-	Launch          *launchArtifacts `json:"launch,omitempty"`
-	Shutdown        string           `json:"shutdown,omitempty"`
+	Launch          *launchArtifacts `json:"launch"`
 	Stopping        bool             `json:"stopping,omitempty"`
 	SourceDirectory string           `json:"source_directory,omitempty"`
-	BootID          string           `json:"boot_id,omitempty"`
-	InstanceID      string           `json:"instance_id,omitempty"`
+	BootID          string           `json:"boot_id"`
+	InstanceID      string           `json:"instance_id"`
 	Project         *Project         `json:"project,omitempty"`
 	PID             int              `json:"pid"`
 	StartTime       string           `json:"start_time"`
 	Ready           bool             `json:"ready"`
 }
 
+const currentRecordVersion = 1
+
 type storedRecord struct {
 	record
+	Version              int    `json:"version"`
 	SourceDirectoryBytes []byte `json:"source_directory_bytes,omitempty"`
 }
 
@@ -132,16 +137,20 @@ func lockState(ctx context.Context, name string) (string, *os.File, error) {
 }
 
 func saveRecord(dir string, state record) error {
-	stored := storedRecord{record: state}
-	if !utf8.ValidString(state.SourceDirectory) {
-		stored.SourceDirectoryBytes = []byte(state.SourceDirectory)
-		stored.SourceDirectory = ""
-	}
-	data, err := json.Marshal(stored)
+	data, err := encodeRecord(state)
 	if err != nil {
 		return err
 	}
 	return replaceFile(dir, "state.json", data)
+}
+
+func encodeRecord(state record) ([]byte, error) {
+	stored := storedRecord{record: state, Version: currentRecordVersion}
+	if !utf8.ValidString(state.SourceDirectory) {
+		stored.SourceDirectoryBytes = []byte(state.SourceDirectory)
+		stored.SourceDirectory = ""
+	}
+	return json.Marshal(stored)
 }
 
 func replaceFile(dir, name string, data []byte) error {
@@ -176,16 +185,27 @@ func readRecord(dir string) (record, error) {
 	return decodeRecord(data)
 }
 
+var requiredRecordFields = []string{"version", "launch", "boot_id", "instance_id", "pid", "start_time", "ready"}
+
 func decodeRecord(data []byte) (record, error) {
 	if !utf8.Valid(data) {
 		return record{}, errors.New("read VM state: invalid UTF-8")
 	}
 	var stored *storedRecord
-	if err := json.Unmarshal(data, &stored); err != nil {
+	if err := jsonv2.Unmarshal(data, &stored, jsonv2.RejectUnknownMembers(true)); err != nil {
+		if errors.Is(err, jsonv2.ErrUnknownName) {
+			return record{}, fmt.Errorf("unsupported or corrupt VM state: %w", err)
+		}
 		return record{}, fmt.Errorf("read VM state: %w", err)
 	}
 	if stored == nil {
 		return record{}, errors.New("read VM state: expected an object")
+	}
+	if err := requireCurrentRecordFields(data); err != nil {
+		return record{}, err
+	}
+	if stored.Version != currentRecordVersion {
+		return record{}, fmt.Errorf("unsupported or corrupt VM state: version %d is unsupported (expected %d)", stored.Version, currentRecordVersion)
 	}
 	state := &stored.record
 	if stored.SourceDirectoryBytes != nil {
@@ -194,37 +214,74 @@ func decodeRecord(data []byte) (record, error) {
 		}
 		state.SourceDirectory = string(stored.SourceDirectoryBytes)
 	}
-	if state.Shutdown != "" && state.Shutdown != shutdownCapability {
-		return record{}, errors.New("invalid VM shutdown capability")
+	if err := validateRecord(*state); err != nil {
+		return record{}, fmt.Errorf("unsupported or corrupt VM state: %w", err)
 	}
+	return *state, nil
+}
+
+func requireCurrentRecordFields(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("read VM state: %w", err)
+	}
+	for _, name := range requiredRecordFields {
+		field, ok := fields[name]
+		if !ok {
+			return fmt.Errorf("unsupported or corrupt VM state: missing %s", name)
+		}
+		if bytes.Equal(field, []byte("null")) {
+			return fmt.Errorf("unsupported or corrupt VM state: %s cannot be null", name)
+		}
+	}
+	_, text := fields["source_directory"]
+	_, raw := fields["source_directory_bytes"]
+	if !text && !raw {
+		return errors.New("unsupported or corrupt VM state: missing source_directory")
+	}
+	return nil
+}
+
+func validateRecord(state record) error {
 	if state.Creating && state.Ready {
-		return record{}, errors.New("invalid VM creation state")
+		return errors.New("invalid VM creation state")
 	}
 	if state.Stopping && state.PID == 0 {
-		return record{}, errors.New("invalid stopping VM process identity")
+		return errors.New("invalid stopping VM process identity")
 	}
-	if state.PID < 0 || (state.PID != 0 && state.StartTime == "") || (state.Ready && state.PID == 0) {
-		return record{}, errors.New("invalid VM process identity")
+	if !validProcessIdentity(state) {
+		return errors.New("invalid VM process identity")
 	}
-	if state.InstanceID != "" && !validInstanceID.MatchString(state.InstanceID) {
-		return record{}, errors.New("invalid VM instance identity")
+	if !validInstanceID.MatchString(state.InstanceID) {
+		return errors.New("invalid VM instance identity")
 	}
-	if state.BootID != "" && !validBootID.MatchString(state.BootID) {
-		return record{}, errors.New("invalid VM host boot identity")
+	if !validBootID.MatchString(state.BootID) {
+		return errors.New("invalid VM host boot identity")
 	}
-	if !validSourceDirectory(state.SourceDirectory) {
-		return record{}, errors.New("invalid VM source directory")
+	if !validAbsolutePath(state.SourceDirectory) {
+		return errors.New("invalid VM source directory")
 	}
-	if state.Launch != nil && !validLaunchArtifacts(*state.Launch) {
-		return record{}, errors.New("invalid VM launch artifacts")
+	if state.Launch == nil {
+		return errors.New("missing launch artifacts")
+	}
+	if !validLaunchArtifacts(*state.Launch) {
+		return errors.New("invalid VM launch artifacts")
 	}
 	if state.Project != nil {
 		p := state.Project
 		if p.Workspace != Workspace || p.Branch == "" || strings.ContainsAny(p.Branch, "\x00\r\n") || !validCommit.MatchString(p.Commit) {
-			return record{}, errors.New("invalid VM project metadata")
+			return errors.New("invalid VM project metadata")
 		}
 	}
-	return *state, nil
+	return nil
+}
+
+func validProcessIdentity(state record) bool {
+	if state.PID == 0 {
+		return state.StartTime == "" && !state.Ready
+	}
+	ticks, err := strconv.ParseUint(state.StartTime, 10, 64)
+	return state.PID > 0 && err == nil && strconv.FormatUint(ticks, 10) == state.StartTime
 }
 
 var validDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -241,29 +298,10 @@ func validAbsolutePath(path string) bool {
 	return filepath.IsAbs(path) && filepath.Clean(path) == path && !strings.ContainsRune(path, 0)
 }
 
-func validSourceDirectory(path string) bool {
-	return path == "" || validAbsolutePath(path)
-}
-
 func newInstanceID() (string, error) {
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(random[:]), nil
-}
-
-func ensureInstanceID(dir string, state record) (record, error) {
-	if state.InstanceID != "" {
-		return state, nil
-	}
-	id, err := newInstanceID()
-	if err != nil {
-		return record{}, err
-	}
-	state.InstanceID = id
-	if err := saveRecord(dir, state); err != nil {
-		return record{}, err
-	}
-	return state, nil
 }

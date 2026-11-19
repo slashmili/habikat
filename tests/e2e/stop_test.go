@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"golang.org/x/sys/unix"
 	"os"
@@ -434,23 +435,51 @@ func assertVMAlive(t *testing.T, pid int) {
 	}
 }
 
-func TestLegacyGracefulStopCapability(t *testing.T) {
+func TestCreateRefusesImageWithoutGracefulShutdown(t *testing.T) {
 	h := newHarness(t)
 	image := stopFixtureImage(t, "#!/bin/sh\nexit 0\n", false)
 	h.env = append(h.env, "HK_IMAGE_DIR="+image)
-	h.must("", "create", "--name", "legacy")
-	pid := vmPID(t, h.state("legacy", "state.json"))
-	before := read(t, h.state("legacy", "state.json"))
-	if out, err := h.run("", "stop", "legacy"); err == nil || !strings.Contains(out, "does not support graceful shutdown") {
-		t.Fatalf("legacy stop: %v %s", err, out)
+	if out, err := h.run("", "create", "--name", "incapable"); err == nil || !strings.Contains(out, "does not support graceful shutdown") {
+		t.Fatalf("create from image without graceful shutdown: %v %s", err, out)
 	}
-	assertVMAlive(t, pid)
-	if !bytes.Equal(before, read(t, h.state("legacy", "state.json"))) {
-		t.Fatal("unsupported stop changed legacy identity")
+	if _, err := os.Lstat(filepath.Dir(h.state("incapable", "state.json"))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("refused create left VM state: %v", err)
 	}
-	h.must("", "stop", "--force", "legacy")
-	assertGone(t, pid)
-	if _, err := os.Stat(h.state("legacy", "rootfs.ext4")); err != nil {
+}
+
+func TestCreateRefusesRootDiskChangedAfterImageVerification(t *testing.T) {
+	h := newHarness(t)
+	legacy := stopFixtureImage(t, "#!/bin/sh\nexit 0\n", false)
+	image := t.TempDir()
+	for _, name := range []string{"firecracker", "vmlinux", "rootfs.ext4", "manifest.json"} {
+		if err := os.Symlink(filepath.Join(os.Getenv("HK_IMAGE_DIR"), name), filepath.Join(image, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	realCopy, err := exec.LookPath("cp")
+	if err != nil {
 		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	copyScript := filepath.Join(bin, "cp")
+	write(t, copyScript, []byte(`#!/bin/sh
+set -eu
+ln -sfn "$LEGACY_ROOTFS" "$HK_IMAGE_DIR/rootfs.ext4"
+ln -sfn "$LEGACY_MANIFEST" "$HK_IMAGE_DIR/manifest.json"
+exec "$REAL_CP" "$@"
+`))
+	if err := os.Chmod(copyScript, 0700); err != nil {
+		t.Fatal(err)
+	}
+	h.env = append(h.env,
+		"HK_IMAGE_DIR="+image, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"REAL_CP="+realCopy, "LEGACY_ROOTFS="+filepath.Join(legacy, "rootfs.ext4"),
+		"LEGACY_MANIFEST="+filepath.Join(legacy, "manifest.json"),
+	)
+	if out, err := h.run("", "create", "--name", "swapped"); err == nil || !strings.Contains(out, "SHA-256 mismatch for rootfs.ext4") {
+		t.Fatalf("create from a changed image: %v %s", err, out)
+	}
+	if _, err := os.Lstat(filepath.Dir(h.state("swapped", "state.json"))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("refused create left VM state: %v", err)
 	}
 }

@@ -83,7 +83,7 @@ func startImageFixture(t *testing.T) (string, launchArtifacts) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeManifest(t, image, map[string]string{"firecracker": firecracker, "vmlinux": kernel})
+	writeManifest(t, image, map[string]string{"firecracker": firecracker, "vmlinux": kernel, "shutdown": shutdownCapability})
 	return image, launchArtifacts{
 		Firecracker: artifactRef{Path: filepath.Join(image, "firecracker"), SHA256: firecracker},
 		Kernel:      artifactRef{Path: filepath.Join(image, "vmlinux"), SHA256: kernel},
@@ -102,11 +102,11 @@ func startFixture(t *testing.T) startEnv {
 	}
 	image, launch := startImageFixture(t)
 	state := record{
-		Shutdown:   shutdownCapability,
-		InstanceID: strings.Repeat("2", 32),
-		BootID:     "00000000-0000-0000-0000-000000000000",
-		Launch:     &launch,
-		Project:    &Project{Branch: "main", Commit: strings.Repeat("a", 40), Workspace: Workspace},
+		InstanceID:      strings.Repeat("2", 32),
+		BootID:          "00000000-0000-0000-0000-000000000000",
+		Launch:          &launch,
+		SourceDirectory: "/source",
+		Project:         &Project{Branch: "main", Commit: strings.Repeat("a", 40), Workspace: Workspace},
 	}
 	if err := saveRecord(dir, state); err != nil {
 		t.Fatal(err)
@@ -136,11 +136,16 @@ func (env startEnv) launches(t *testing.T) []string {
 	return strings.Fields(strings.ReplaceAll(string(data), "\n", " "))
 }
 
-func (env startEnv) assertStorage(t *testing.T) {
+func (env startEnv) assertDisksAndKeys(t *testing.T) {
 	t.Helper()
 	for _, file := range preservedStartFiles {
 		assertFileContents(t, filepath.Join(env.dir, file), []byte("preserved "+file))
 	}
+}
+
+func (env startEnv) assertStorage(t *testing.T) {
+	t.Helper()
+	env.assertDisksAndKeys(t)
 	current, err := readRecord(env.dir)
 	if err != nil || current.InstanceID != env.state.InstanceID || current.Project == nil || *current.Project != *env.state.Project {
 		t.Fatalf("persistent identity changed: %+v %v", current, err)
@@ -507,7 +512,7 @@ func TestStartRaceLaunchesOneWriter(t *testing.T) {
 }
 
 func TestStartRefusesShuttingDownVM(t *testing.T) {
-	dir, child, state := stopFixture(t, true)
+	dir, child, state := stopFixture(t)
 	state.Stopping = true
 	if err := saveRecord(dir, state); err != nil {
 		t.Fatal(err)
@@ -528,7 +533,7 @@ func TestStartRefusesMismatchedLiveProcess(t *testing.T) {
 		{"other pid", func(state *record) { state.PID = os.Getpid() }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir, child, state := stopFixture(t, true)
+			dir, child, state := stopFixture(t)
 			tc.change(&state)
 			if err := saveRecord(dir, state); err != nil {
 				t.Fatal(err)
@@ -580,9 +585,7 @@ func TestStartIgnoresStaleRuntimeIdentity(t *testing.T) {
 
 func TestStartRefusesRecordWithoutLaunchArtifacts(t *testing.T) {
 	env := startFixture(t)
-	if err := saveRecord(env.dir, record{Project: env.state.Project, InstanceID: env.state.InstanceID}); err != nil {
-		t.Fatal(err)
-	}
+	writeTestFile(t, filepath.Join(env.dir, "state.json"), recordWithoutField(t, env.state, "launch"))
 	if err := writeLaunchConfig(env.dir, env.state.Launch.Kernel.Path); err != nil {
 		t.Fatal(err)
 	}
@@ -592,13 +595,12 @@ func TestStartRefusesRecordWithoutLaunchArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = startVM(t.Context(), "vm", readyNow, time.Second)
-	assertErrorContains(t, err, "no recorded launch artifacts")
-	assertErrorContains(t, err, "preserved")
+	assertErrorContains(t, err, "unsupported or corrupt VM state")
 	if len(env.launches(t)) != 0 {
 		t.Fatal("started without recorded launch artifacts")
 	}
 	assertFileContents(t, filepath.Join(env.dir, "state.json"), before)
-	env.assertStorage(t)
+	env.assertDisksAndKeys(t)
 }
 
 func TestStartMissingDoesNotCreateState(t *testing.T) {
@@ -642,12 +644,12 @@ func TestStartRecordRejectsInvalidLaunchArtifacts(t *testing.T) {
 		{"nul path", `{"firecracker":{"path":"/i/firecracker\u0000","sha256":"` + digest + `"},"kernel":{"path":"/i/vmlinux","sha256":"` + digest + `"}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := decodeRecord([]byte(`{"pid":0,"start_time":"","ready":false,"launch":` + tc.launch + `}`))
+			_, err := decodeRecord(currentRecordJSON(t, `{"launch":`+tc.launch+`}`))
 			assertErrorContains(t, err, "launch artifacts")
 		})
 	}
 	valid := `{"firecracker":{"path":"/i/firecracker","sha256":"` + digest + `"},"kernel":{"path":"/i/vmlinux","sha256":"` + digest + `"}}`
-	state, err := decodeRecord([]byte(`{"pid":0,"start_time":"","ready":false,"launch":` + valid + `}`))
+	state, err := decodeRecord(currentRecordJSON(t, `{"launch":`+valid+`}`))
 	if err != nil || state.Launch == nil || state.Launch.Kernel.Path != "/i/vmlinux" {
 		t.Fatalf("valid launch record: %+v %v", state.Launch, err)
 	}
@@ -655,7 +657,7 @@ func TestStartRecordRejectsInvalidLaunchArtifacts(t *testing.T) {
 
 func FuzzStartPreservesData(f *testing.F) {
 	for _, data := range []string{
-		`{}`, `null`, `{"pid":-1}`, `{"pid":0,"ready":true}`, `{"stopping":true}`, `{"creating":true}`, `{"creating":true,"ready":true}`,
+		currentRecordSeed(f, "/source"), `{}`, `null`, `{"pid":-1}`, `{"pid":0,"ready":true}`, `{"stopping":true}`, `{"creating":true}`, `{"creating":true,"ready":true}`,
 		`{"launch":{"firecracker":{"path":"/bin/sh","sha256":"00"}}}`,
 		`{"pid":1,"start_time":"1","ready":true,"boot_id":"00000000-0000-0000-0000-000000000000"}`,
 		`{"instance_id":"22222222222222222222222222222222","launch":null}`,
@@ -830,10 +832,14 @@ func TestStartRefusesToAdoptIncompleteCreateProcess(t *testing.T) {
 }
 
 func TestRecordRejectsReadyWhileCreating(t *testing.T) {
-	if _, err := decodeRecord([]byte(`{"creating":true,"pid":1,"start_time":"1","ready":true}`)); err == nil {
-		t.Fatal("accepted a ready VM that is still being created")
+	invalid := currentRecordJSON(t, `{"creating":true,"pid":1,"start_time":"1","ready":true}`)
+	_, err := decodeRecord(invalid)
+	assertErrorContains(t, err, "invalid VM creation state")
+	data, err := encodeRecord(currentRecordWith(t, func(s *record) { s.Creating = true }))
+	if err != nil {
+		t.Fatal(err)
 	}
-	state, err := decodeRecord([]byte(`{"creating":true}`))
+	state, err := decodeRecord(data)
 	if err != nil || !state.Creating {
 		t.Fatalf("creating marker lost: %+v %v", state, err)
 	}
@@ -841,13 +847,15 @@ func TestRecordRejectsReadyWhileCreating(t *testing.T) {
 
 func TestInitialCreateRecord(t *testing.T) {
 	images, manifest := imageFixture(t)
-	manifest["shutdown"] = shutdownCapability
-	writeManifest(t, images, manifest)
-	state, err := initialCreateRecord(images, "/source")
+	image, err := verifyImages(images)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !state.Creating || state.Ready || state.PID != 0 || state.SourceDirectory != "/source" || state.Shutdown != shutdownCapability {
+	state, err := initialCreateRecord(image.launch, "/source")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Creating || state.Ready || state.PID != 0 || state.SourceDirectory != "/source" {
 		t.Fatalf("initial create record: %+v", state)
 	}
 	if !validInstanceID.MatchString(state.InstanceID) || !validBootID.MatchString(state.BootID) {
@@ -938,10 +946,12 @@ func FuzzLaunchArtifactRecord(f *testing.F) {
 		f.Add(seed[0], seed[1])
 	}
 	f.Fuzz(func(t *testing.T, path, digest string) {
-		data, err := json.Marshal(record{Launch: &launchArtifacts{
-			Firecracker: artifactRef{Path: path, SHA256: digest},
-			Kernel:      artifactRef{Path: path, SHA256: digest},
-		}})
+		data, err := encodeRecord(currentRecordWith(t, func(s *record) {
+			s.Launch = &launchArtifacts{
+				Firecracker: artifactRef{Path: path, SHA256: digest},
+				Kernel:      artifactRef{Path: path, SHA256: digest},
+			}
+		}))
 		if err != nil {
 			return
 		}

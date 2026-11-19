@@ -15,7 +15,7 @@ import (
 func TestProjectMetadataAndAttach(t *testing.T) {
 	dir := privateTempDir(t)
 	project := &Project{Branch: "topic/'$%;()", Commit: strings.Repeat("a", 40), Workspace: Workspace}
-	state := record{PID: 42, StartTime: "123", Ready: true, Project: project}
+	state := currentRecordWith(t, func(s *record) { s.PID, s.StartTime, s.Ready, s.Project = 42, "123", true, project })
 	if err := saveRecord(dir, state); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +24,7 @@ func TestProjectMetadataAndAttach(t *testing.T) {
 		t.Fatalf("metadata=%+v %v", got, err)
 	}
 	if attachCommand(nil) != "" {
-		t.Fatal("legacy/empty VM has workspace command")
+		t.Fatal("empty VM has workspace command")
 	}
 	command := attachCommand(project)
 	if !strings.Contains(command, "cd /home/hk/workspace") || strings.Contains(command, "/bin/sh -l") || strings.Contains(command, project.Branch) {

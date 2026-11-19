@@ -18,10 +18,7 @@ func TestProcessOwnsConfigRequiresEveryArgument(t *testing.T) {
 		args  []string
 		owned bool
 	}{
-		{"legacy", []string{"firecracker", "--no-api", "--config-file", config}, true},
-		{"legacy wrong api flag", []string{"firecracker", "--api", "--config-file", config}, false},
-		{"legacy wrong config flag", []string{"firecracker", "--no-api", "--config", config}, false},
-		{"legacy other config", []string{"firecracker", "--no-api", "--config-file", filepath.Join(other, "config.json")}, false},
+		{"no api", []string{"firecracker", "--no-api", "--config-file", config}, false},
 		{"api", []string{"firecracker", "--api-sock", socket, "--config-file", config}, true},
 		{"api wrong socket flag", []string{"firecracker", "--api-socket", socket, "--config-file", config}, false},
 		{"api other socket", []string{"firecracker", "--api-sock", filepath.Join(other, "api.sock"), "--config-file", config}, false},
@@ -58,7 +55,7 @@ func TestSameProcessRejectsOtherBoot(t *testing.T) {
 }
 
 func TestStopRefusesRecycledPID(t *testing.T) {
-	dir, child, state := stopFixture(t, false)
+	dir, child, state := stopFixture(t)
 	state.StartTime = "1"
 	if err := saveRecord(dir, state); err != nil {
 		t.Fatal(err)
@@ -72,7 +69,7 @@ func TestStopRefusesRecycledPID(t *testing.T) {
 }
 
 func TestDeleteStopsLiveVMFromThisBoot(t *testing.T) {
-	dir, child, state := stopFixture(t, false)
+	dir, child, state := stopFixture(t)
 	if state.BootID == "" {
 		t.Fatal("fixture must record the host boot identity")
 	}

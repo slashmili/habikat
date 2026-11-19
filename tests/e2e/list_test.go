@@ -35,11 +35,6 @@ func TestListVMDirectoryAssociation(t *testing.T) {
 	}
 	h.cwd = empty
 	h.must("", "create", "--name", "list-empty")
-	legacyDir := filepath.Dir(h.state("list-legacy", "state.json"))
-	if err := os.Mkdir(legacyDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	write(t, h.state("list-legacy", "state.json"), []byte(`{"pid":0,"start_time":"","ready":false}`))
 	for name, source := range map[string]string{"list-first": first, "list-second": second, "list-empty": empty} {
 		var state struct {
 			Source string `json:"source_directory"`
@@ -60,7 +55,7 @@ func TestListVMDirectoryAssociation(t *testing.T) {
 	firstIndex := read(t, filepath.Join(first, ".git/index"))
 	firstConfig := read(t, filepath.Join(first, ".git/config"))
 	metadata := map[string][]byte{}
-	for _, name := range []string{"list-empty", "list-first", "list-second", "list-legacy"} {
+	for _, name := range []string{"list-empty", "list-first", "list-second"} {
 		metadata[name] = read(t, h.state(name, "state.json"))
 	}
 	for _, tc := range []struct{ name, directory, want string }{
@@ -89,11 +84,8 @@ func TestListVMDirectoryAssociation(t *testing.T) {
 	for _, row := range rows {
 		names = append(names, row[0])
 	}
-	if !reflect.DeepEqual(names, []string{"list-empty", "list-first", "list-legacy", "list-second"}) {
+	if !reflect.DeepEqual(names, []string{"list-empty", "list-first", "list-second"}) {
 		t.Fatalf("all names=%q", names)
-	}
-	if !strings.Contains(short, "(unknown)") {
-		t.Fatalf("legacy origin missing: %s", short)
 	}
 	for name, before := range metadata {
 		if !bytes.Equal(before, read(t, h.state(name, "state.json"))) {

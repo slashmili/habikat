@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
-
-	"github.com/slashmili/habikat/internal/repository"
 )
 
 func TestListDirectoryContexts(t *testing.T) {
@@ -38,7 +36,7 @@ func TestListDirectoryContexts(t *testing.T) {
 		{name: "second", source: second.repo},
 		{name: "empty", source: outside},
 		{name: "child", source: childDir},
-		{name: "legacy"},
+		{name: "deleted", source: filepath.Join(outside, "deleted")},
 	} {
 		dir := makeVMDir(t, root, fixture.name)
 		process := startTestProcess(t, firecrackerArgs(dir))
@@ -49,7 +47,7 @@ func TestListDirectoryContexts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := saveRecord(makeVMDir(t, root, "stopped"), record{SourceDirectory: first.repo}); err != nil {
+	if err := saveRecord(makeVMDir(t, root, "stopped"), currentRecordWith(t, func(s *record) { s.SourceDirectory = first.repo })); err != nil {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(first.repo, "file"), []byte("dirty host"))
@@ -82,26 +80,5 @@ func TestListDirectoryContexts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(hostBefore, listStateSnapshot(t, first.repo)) {
 		t.Fatal("listing modified dirty host repository")
-	}
-}
-
-func TestSourceMetadataSurvivesIdentityMigration(t *testing.T) {
-	fixture := newExportFixture(t)
-	source, err := repository.SourceDirectory(t.Context(), fixture.repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := privateTempDir(t)
-	state := record{SourceDirectory: source}
-	if err := saveRecord(dir, state); err != nil {
-		t.Fatal(err)
-	}
-	migrated, err := ensureInstanceID(dir, state)
-	if err != nil || migrated.SourceDirectory != source || migrated.InstanceID == "" {
-		t.Fatalf("migrated state=%+v error=%v", migrated, err)
-	}
-	read, err := readRecord(dir)
-	if err != nil || read != migrated {
-		t.Fatalf("persisted state=%+v error=%v", read, err)
 	}
 }

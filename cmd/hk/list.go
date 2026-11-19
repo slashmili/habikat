@@ -54,16 +54,12 @@ func renderList(out io.Writer, rows []vm.Listing) error {
 		return err
 	}
 	for _, row := range rows {
-		directory := row.Directory
-		if directory == "" {
-			directory = "(unknown)"
-		}
 		if _, err := fmt.Fprintf(
 			table,
 			"%s\t%s\t%s\n",
 			terminalText(row.Name),
 			terminalText(row.Status),
-			terminalText(directory),
+			terminalText(row.Directory),
 		); err != nil {
 			return err
 		}

@@ -97,7 +97,7 @@ func finishInterruptedStart(ctx context.Context, name, dir string, state record,
 }
 
 func bootStoppedVM(ctx context.Context, name, dir string, state record, ready readinessCheck, timeout time.Duration) error {
-	launch, err := prepareLaunch(name, dir, state)
+	launch, err := prepareLaunch(dir, state)
 	if err != nil {
 		return fmt.Errorf("cannot start VM %s; its disk, files, and keys are preserved: %w", name, err)
 	}
@@ -119,10 +119,7 @@ func startFailed(name string, err error) error {
 	return fmt.Errorf("start VM %s failed; its disk, files, and keys are preserved: %w", name, err)
 }
 
-func prepareLaunch(name, dir string, state record) (launchArtifacts, error) {
-	if state.Launch == nil {
-		return launchArtifacts{}, fmt.Errorf("VM %s has no recorded launch artifacts", name)
-	}
+func prepareLaunch(dir string, state record) (launchArtifacts, error) {
 	launch := *state.Launch
 	if err := verifyLaunchArtifacts(launch); err != nil {
 		return launchArtifacts{}, err

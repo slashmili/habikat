@@ -642,12 +642,11 @@ func testFetchSourceLostDuringDownload(t *testing.T, f *fetchFixture) {
 func TestFetchUnavailableSourcesAndDestinations(t *testing.T) {
 	f := newFetchFixture(t)
 	f.create("fetch-source")
-	makeLegacyFetchState(t, f)
 	assertCleanFetch(t, f, "fetch-source", f.branch, f.base)
 	id, pid := instanceID(t, f.harness, "fetch-source"), vmPID(t, f.state("fetch-source", "state.json"))
 	assertCleanFetch(t, f, "fetch-source", f.branch, f.base)
 	if instanceID(t, f.harness, "fetch-source") != id || vmPID(t, f.state("fetch-source", "state.json")) != pid {
-		t.Fatal("legacy fetch identity was not stable or recreated VM")
+		t.Fatal("fetch identity was not stable or recreated VM")
 	}
 	cwd := f.cwd
 	unrelated := filepath.Join(f.dir, "unrelated")
@@ -690,21 +689,6 @@ func TestFetchUnavailableSourcesAndDestinations(t *testing.T) {
 			}
 		}
 	}
-}
-
-func makeLegacyFetchState(t *testing.T, f *fetchFixture) {
-	t.Helper()
-	path := f.state("fetch-source", "state.json")
-	var state map[string]any
-	if err := json.Unmarshal(read(t, path), &state); err != nil {
-		t.Fatal(err)
-	}
-	delete(state, "instance_id")
-	data, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	write(t, path, data)
 }
 
 func assertFetchRefusal(t *testing.T, f *fetchFixture, fragment string, args ...string) {

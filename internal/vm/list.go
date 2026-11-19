@@ -77,7 +77,7 @@ func listDirectory(ctx context.Context, root *os.File, source string) ([]Listing
 
 func matchesSource(row Listing, source string) bool {
 	active := row.Status == "running" || row.Status == "starting" || row.Status == "stopping"
-	return active && row.Directory != "" && row.Directory == source
+	return active && row.Directory == source
 }
 
 func listEntry(root *os.File, name string) (Listing, error) {
@@ -195,7 +195,7 @@ func observeStatus(state record, dir string) string {
 		return "stopped"
 	}
 	boot, err := hostBootID()
-	if err != nil || state.BootID == "" {
+	if err != nil {
 		return "unknown"
 	}
 	if state.BootID != boot {

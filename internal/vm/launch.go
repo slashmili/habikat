@@ -31,25 +31,54 @@ func writeLaunchConfig(dir, kernel string) error {
 	return replaceFile(dir, "config.json", data)
 }
 
-func imageLaunchArtifacts(images string) (launchArtifacts, error) {
+type verifiedImage struct {
+	launch   launchArtifacts
+	rootDisk artifactRef
+}
+
+func verifyImages(images string) (verifiedImage, error) {
 	data, err := os.ReadFile(filepath.Join(images, "manifest.json"))
 	if err != nil {
-		return launchArtifacts{}, err
+		return verifiedImage{}, fmt.Errorf("build the VM image with images/build.py first: %w", err)
 	}
 	var manifest map[string]string
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return launchArtifacts{}, fmt.Errorf("read image manifest: %w", err)
+		return verifiedImage{}, fmt.Errorf("read image manifest: %w", err)
 	}
-	launch := launchArtifacts{
-		Firecracker: artifactRef{Path: filepath.Join(images, "firecracker"), SHA256: manifest["firecracker"]},
-		Kernel:      artifactRef{Path: filepath.Join(images, "vmlinux"), SHA256: manifest["vmlinux"]},
+	image := verifiedImage{
+		launch: launchArtifacts{
+			Firecracker: artifactRef{Path: filepath.Join(images, "firecracker"), SHA256: manifest["firecracker"]},
+			Kernel:      artifactRef{Path: filepath.Join(images, "vmlinux"), SHA256: manifest["vmlinux"]},
+		},
+		rootDisk: artifactRef{Path: filepath.Join(images, "rootfs.ext4"), SHA256: manifest["rootfs.ext4"]},
 	}
-	for _, artifact := range []artifactRef{launch.Firecracker, launch.Kernel} {
-		if !validArtifact(artifact) {
-			return launchArtifacts{}, fmt.Errorf("image manifest has no valid SHA-256 for %s", filepath.Base(artifact.Path))
+	for _, artifact := range []artifactRef{image.launch.Firecracker, image.launch.Kernel, image.rootDisk} {
+		if len(artifact.SHA256) != 64 {
+			return verifiedImage{}, fmt.Errorf("missing SHA-256 for %s", filepath.Base(artifact.Path))
+		}
+		if err := verifyImageFile(artifact.Path, artifact.SHA256); err != nil {
+			return verifiedImage{}, err
 		}
 	}
-	return launch, nil
+	if err := requireShutdownCapability(manifest); err != nil {
+		return verifiedImage{}, err
+	}
+	return image, nil
+}
+
+func verifyImageFile(path, expected string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	digest, err := readerSHA256(file)
+	if err := errors.Join(err, file.Close()); err != nil {
+		return err
+	}
+	if digest != expected {
+		return fmt.Errorf("SHA-256 mismatch for %s", filepath.Base(path))
+	}
+	return nil
 }
 
 func verifyLaunchArtifacts(launch launchArtifacts) error {
@@ -101,18 +130,11 @@ func validateSocketPaths(dir string) error {
 	return nil
 }
 
-func imageShutdownCapability(images string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(images, "manifest.json"))
-	if err != nil {
-		return "", err
+const shutdownCapability = "ctrl-alt-del-v1"
+
+func requireShutdownCapability(manifest map[string]string) error {
+	if manifest["shutdown"] != shutdownCapability {
+		return fmt.Errorf("image does not support graceful shutdown (requires %q); rebuild the image with images/build.py into a new directory", shutdownCapability)
 	}
-	var manifest map[string]string
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return "", err
-	}
-	capability := manifest["shutdown"]
-	if capability != "" && capability != shutdownCapability {
-		return "", errors.New("unsupported image shutdown capability")
-	}
-	return capability, nil
+	return nil
 }

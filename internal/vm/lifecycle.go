@@ -2,7 +2,6 @@ package vm
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -27,35 +26,6 @@ func imageDir() (string, error) {
 		return "", err
 	}
 	return filepath.Abs(filepath.Join(cache, "habikat", "image"))
-}
-
-func verifyImages(dir string) error {
-	data, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
-	if err != nil {
-		return fmt.Errorf("build the VM image with images/build.py first: %w", err)
-	}
-	var manifest map[string]string
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("read image manifest: %w", err)
-	}
-	for _, name := range []string{"firecracker", "vmlinux", "rootfs.ext4"} {
-		if len(manifest[name]) != 64 {
-			return fmt.Errorf("missing SHA-256 for %s", name)
-		}
-		file, err := os.Open(filepath.Join(dir, name))
-		if err != nil {
-			return err
-		}
-		digest, err := readerSHA256(file)
-		err = errors.Join(err, file.Close())
-		if err != nil {
-			return err
-		}
-		if digest != manifest[name] {
-			return fmt.Errorf("SHA-256 mismatch for %s", name)
-		}
-	}
-	return nil
 }
 
 type CreateOptions struct {
@@ -129,7 +99,8 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 	if err != nil {
 		return err
 	}
-	if err := verifyImages(images); err != nil {
+	image, err := verifyImages(images)
+	if err != nil {
 		return err
 	}
 	dir, lock, err := lockState(ctx, name)
@@ -158,7 +129,7 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 			result = errors.Join(result, cleanupFailedCreate(state, dir, name))
 		}
 	}()
-	state, err = initialCreateRecord(images, sourceDirectory)
+	state, err = initialCreateRecord(image.launch, sourceDirectory)
 	if err != nil {
 		return err
 	}
@@ -172,9 +143,8 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 	if err := provisionKeys(dir, name); err != nil {
 		return err
 	}
-	copy := exec.CommandContext(ctx, "cp", "--reflink=auto", "--sparse=always", "--", filepath.Join(images, "rootfs.ext4"), filepath.Join(dir, "rootfs.ext4"))
-	if output, err := copy.CombinedOutput(); err != nil {
-		return fmt.Errorf("copy root disk: %w: %s", err, output)
+	if err := copyVerifiedRootDisk(ctx, image.rootDisk, dir); err != nil {
+		return err
 	}
 	seed := exec.CommandContext(ctx, "mkfs.ext4", "-q", "-F", "-O", "^has_journal", "-d", filepath.Join(dir, "seed"), filepath.Join(dir, "seed.ext4"), "2048")
 	if output, err := seed.CombinedOutput(); err != nil {
@@ -192,6 +162,9 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 		return err
 	}
 	defer log.Close()
+	if err := verifyLaunchArtifacts(image.launch); err != nil {
+		return err
+	}
 	state.PID, err = startDetachedFirecracker(ctx, state.Launch.Firecracker.Path, configPath, log)
 	if err != nil {
 		return err
@@ -233,17 +206,21 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 	}
 }
 
-func initialCreateRecord(images, sourceDirectory string) (record, error) {
-	state := record{Creating: true, SourceDirectory: sourceDirectory}
+func copyVerifiedRootDisk(ctx context.Context, source artifactRef, dir string) error {
+	destination := filepath.Join(dir, "rootfs.ext4")
+	copy := exec.CommandContext(ctx, "cp", "--reflink=auto", "--sparse=always", "--", source.Path, destination)
+	if output, err := copy.CombinedOutput(); err != nil {
+		return fmt.Errorf("copy root disk: %w: %s", err, output)
+	}
+	if err := verifyImageFile(destination, source.SHA256); err != nil {
+		return fmt.Errorf("verify copied root disk: %w", err)
+	}
+	return nil
+}
+
+func initialCreateRecord(launch launchArtifacts, sourceDirectory string) (record, error) {
+	state := record{Creating: true, SourceDirectory: sourceDirectory, Launch: &launch}
 	var err error
-	if state.Shutdown, err = imageShutdownCapability(images); err != nil {
-		return record{}, err
-	}
-	launch, err := imageLaunchArtifacts(images)
-	if err != nil {
-		return record{}, err
-	}
-	state.Launch = &launch
 	if state.BootID, err = hostBootID(); err != nil {
 		return record{}, err
 	}
@@ -305,9 +282,6 @@ func processOwnsConfig(pid int, dir string) (bool, error) {
 	args := strings.Split(string(data), "\x00")
 	if filepath.Base(args[0]) != "firecracker" {
 		return false, nil
-	}
-	if len(args) == 5 {
-		return args[1] == "--no-api" && args[2] == "--config-file" && args[3] == filepath.Join(dir, "config.json"), nil
 	}
 	return len(args) == 6 && args[1] == "--api-sock" && args[2] == filepath.Join(dir, "api.sock") && args[3] == "--config-file" && args[4] == filepath.Join(dir, "config.json"), nil
 }

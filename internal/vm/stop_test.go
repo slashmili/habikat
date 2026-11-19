@@ -17,20 +17,16 @@ import (
 	"time"
 )
 
-func stopFixture(t *testing.T, api bool) (string, *testProcess, record) {
+func stopFixture(t *testing.T) (string, *testProcess, record) {
 	t.Helper()
-	return stopProcessFixture(t, api, true)
+	return stopProcessFixture(t, true)
 }
 
-func stopProcessFixture(t *testing.T, api, holdsDisk bool) (string, *testProcess, record) {
+func stopProcessFixture(t *testing.T, holdsDisk bool) (string, *testProcess, record) {
 	t.Helper()
 	root := privateTempDir(t)
 	t.Setenv("HK_STATE_DIR", root)
 	dir := makeVMDir(t, root, "vm")
-	args := firecrackerArgs(dir)
-	if api {
-		args = []string{"firecracker", "--api-sock", filepath.Join(dir, "api.sock"), "--config-file", filepath.Join(dir, "config.json")}
-	}
 	for _, file := range []string{"rootfs.ext4", "seed.ext4", "identity", "known_hosts"} {
 		writeTestFile(t, filepath.Join(dir, file), []byte("preserved "+file))
 	}
@@ -39,21 +35,11 @@ func stopProcessFixture(t *testing.T, api, holdsDisk bool) (string, *testProcess
 		disk = filepath.Join(dir, "rootfs.ext4")
 	}
 	t.Setenv("HABIKAT_VM_TEST_DISK", disk)
-	child := startTestProcess(t, args)
-	state := child.state
-	var err error
-	state.BootID, err = hostBootID()
-	if err != nil {
+	child := startTestProcess(t, firecrackerArgs(dir))
+	if err := saveRecord(dir, child.state); err != nil {
 		t.Fatal(err)
 	}
-	state.InstanceID = strings.Repeat("1", 32)
-	if api {
-		state.Shutdown = "ctrl-alt-del-v1"
-	}
-	if err := saveRecord(dir, state); err != nil {
-		t.Fatal(err)
-	}
-	return dir, child, state
+	return dir, child, child.state
 }
 
 func assertStopStorage(t *testing.T, dir string, state record) {
@@ -68,7 +54,7 @@ func assertStopStorage(t *testing.T, dir string, state record) {
 }
 
 func TestStopGracefulWaitsForExit(t *testing.T) {
-	dir, child, state := stopFixture(t, true)
+	dir, child, state := stopFixture(t)
 	err := stopVM(t.Context(), "vm", false, time.Second, func(ctx context.Context, got record, gotDir string) error {
 		if gotDir != dir || got.PID != state.PID {
 			t.Fatal("wrong shutdown target")
@@ -105,7 +91,7 @@ func TestStopGracefulWaitsForExit(t *testing.T) {
 }
 
 func TestStopAcknowledgmentIsNotExit(t *testing.T) {
-	dir, child, state := stopFixture(t, true)
+	dir, child, state := stopFixture(t)
 	err := stopVM(t.Context(), "vm", false, 30*time.Millisecond, func(context.Context, record, string) error { return nil })
 	assertErrorContains(t, err, "may still complete")
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -120,7 +106,7 @@ func TestStopAcknowledgmentIsNotExit(t *testing.T) {
 }
 
 func TestStopCancellationAfterRequest(t *testing.T) {
-	dir, child, state := stopFixture(t, true)
+	dir, child, state := stopFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	err := stopVM(ctx, "vm", false, time.Second, func(context.Context, record, string) error { cancel(); return nil })
@@ -133,9 +119,7 @@ func TestStopCancellationAfterRequest(t *testing.T) {
 }
 
 func TestStopForcePreservesStorage(t *testing.T) {
-	dir, child, state := stopFixture(t, false)
-	assertErrorContains(t, Stop(t.Context(), "vm", false), "does not support graceful shutdown")
-	child.assertAlive(t)
+	dir, child, state := stopFixture(t)
 	if err := Stop(t.Context(), "vm", true); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +139,7 @@ func TestStopMissingDoesNotCreateState(t *testing.T) {
 }
 
 func TestStopRejectsConflictingLifecycle(t *testing.T) {
-	dir, child, state := stopFixture(t, true)
+	dir, child, state := stopFixture(t)
 	err := stopVM(t.Context(), "vm", false, time.Second, func(context.Context, record, string) error {
 		assertErrorContains(t, Stop(t.Context(), "vm", true), "lifecycle operation")
 		assertErrorContains(t, Delete(t.Context(), "vm", nil), "lifecycle operation")
@@ -168,7 +152,7 @@ func TestStopRejectsConflictingLifecycle(t *testing.T) {
 }
 
 func TestStopRefusesForeignBootProcess(t *testing.T) {
-	dir, child, state := stopFixture(t, false)
+	dir, child, state := stopFixture(t)
 	state.BootID = "00000000-0000-0000-0000-000000000000"
 	if err := saveRecord(dir, state); err != nil {
 		t.Fatal(err)
@@ -181,7 +165,7 @@ func TestStopRefusesForeignBootProcess(t *testing.T) {
 }
 
 func FuzzStopPreservesData(f *testing.F) {
-	for _, data := range []string{`{}`, `null`, `{"pid":-1}`, `{"pid":0,"ready":true}`, `{"instance_id":"bad"}`, `{"pid":0,"start_time":""}`} {
+	for _, data := range []string{currentRecordSeed(f, "/source"), `{}`, `null`, `{"pid":-1}`, `{"pid":0,"ready":true}`, `{"instance_id":"bad"}`, `{"pid":0,"start_time":""}`} {
 		f.Add(data, false)
 		f.Add(data, true)
 	}
@@ -200,7 +184,7 @@ func FuzzStopPreservesData(f *testing.F) {
 }
 
 func TestStopDoesNotOverwriteLinkedTemporaryFile(t *testing.T) {
-	dir, child, state := stopFixture(t, false)
+	dir, child, state := stopFixture(t)
 	sentinel := filepath.Join(privateTempDir(t), "valuable")
 	writeTestFile(t, sentinel, []byte("keep"))
 	if err := os.Symlink(sentinel, filepath.Join(dir, "state.tmp")); err != nil {
@@ -223,7 +207,7 @@ func TestStopRejectsMalformedLifecycleState(t *testing.T) {
 }
 
 func TestStopRefusesSymlinkRecordAndSocket(t *testing.T) {
-	dir, child, _ := stopFixture(t, true)
+	dir, child, _ := stopFixture(t)
 	state := filepath.Join(dir, "state.json")
 	backup := filepath.Join(dir, "state.backup")
 	if err := os.Rename(state, backup); err != nil {
@@ -239,7 +223,7 @@ func TestStopRefusesSymlinkRecordAndSocket(t *testing.T) {
 }
 
 func TestForceDeleteRefusesConflictingBootIdentity(t *testing.T) {
-	dir, child, _ := stopFixture(t, false)
+	dir, child, _ := stopFixture(t)
 	state := child.state
 	state.BootID = "00000000-0000-0000-0000-000000000000"
 	if err := saveRecord(dir, state); err != nil {
@@ -253,7 +237,7 @@ func TestForceDeleteRefusesConflictingBootIdentity(t *testing.T) {
 }
 
 func TestStoppingVMRejectsFetch(t *testing.T) {
-	dir, _, state := stopFixture(t, true)
+	dir, _, state := stopFixture(t)
 	state.Stopping = true
 	state.Project = &Project{Branch: "main", Commit: strings.Repeat("a", 40), Workspace: Workspace}
 	if err := requireFetchSource("vm", dir, state); err == nil {
@@ -267,7 +251,7 @@ func TestStoppingVMRejectsFetch(t *testing.T) {
 }
 
 func TestAttachStoppedDoesNotSuggestDiscardingWork(t *testing.T) {
-	dir, child, state := stopFixture(t, false)
+	dir, child, state := stopFixture(t)
 	if err := Stop(t.Context(), "vm", true); err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +270,7 @@ func TestAttachStoppedDoesNotSuggestDiscardingWork(t *testing.T) {
 }
 
 func TestUnavailableVMExplainsState(t *testing.T) {
-	dir, _, state := stopFixture(t, true)
+	dir, _, state := stopFixture(t)
 	for _, tc := range []struct {
 		name   string
 		change func(*record)
@@ -319,7 +303,7 @@ func TestDeleteWaitDoesNotHoldGlobalLock(t *testing.T) {
 	root := privateTempDir(t)
 	t.Setenv("HK_STATE_DIR", root)
 	dir := makeVMDir(t, root, "vm")
-	if err := saveRecord(dir, record{}); err != nil {
+	if err := saveRecord(dir, currentRecord(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err := deleteState(t.Context(), "vm", func(record, string) error { assertLifecycleLockAvailable(t); return nil }); err != nil {
@@ -327,9 +311,8 @@ func TestDeleteWaitDoesNotHoldGlobalLock(t *testing.T) {
 	}
 }
 
-func TestFetchDoesNotMigrateIdentityDuringLifecycleOperation(t *testing.T) {
-	dir, _, state := stopFixture(t, true)
-	state.InstanceID = ""
+func TestFetchRefusesDuringLifecycleOperation(t *testing.T) {
+	dir, _, state := stopFixture(t)
 	state.Project = &Project{Branch: "main", Commit: strings.Repeat("a", 40), Workspace: Workspace}
 	if err := saveRecord(dir, state); err != nil {
 		t.Fatal(err)
@@ -375,8 +358,8 @@ func TestProcessDisappearanceErrors(t *testing.T) {
 }
 
 func TestDeleteRetainsStorageWhenProcessIdentityChanged(t *testing.T) {
-	dir, child, state := stopFixture(t, true)
-	state.StartTime = "stale-start-time"
+	dir, child, state := stopFixture(t)
+	state.StartTime = "1"
 	if err := saveRecord(dir, state); err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +375,7 @@ func TestStopRequiresRecordedRootDisk(t *testing.T) {
 		t.Run(fmt.Sprint(force), func(t *testing.T) {
 			for _, kind := range []string{"no handle", "replaced inode", "missing disk"} {
 				t.Run(kind, func(t *testing.T) {
-					dir, child, _ := stopProcessFixture(t, true, kind != "no handle")
+					dir, child, _ := stopProcessFixture(t, kind != "no handle")
 					disk := filepath.Join(dir, "rootfs.ext4")
 					if kind != "no handle" {
 						if err := os.Rename(disk, filepath.Join(dir, "previous.ext4")); err != nil {
@@ -427,7 +410,7 @@ func TestDeleteAllowsSiblingStopDuringWait(t *testing.T) {
 	target := makeVMDir(t, root, "deleting")
 	sibling := makeVMDir(t, root, "sibling")
 	for _, dir := range []string{target, sibling} {
-		if err := saveRecord(dir, record{}); err != nil {
+		if err := saveRecord(dir, currentRecord(t)); err != nil {
 			t.Fatal(err)
 		}
 		writeTestFile(t, filepath.Join(dir, "rootfs.ext4"), []byte("preserve"))
@@ -455,7 +438,7 @@ func runStopTestChild() {
 		}
 		defer disk.Close()
 	}
-	if mode == "legacy" || mode == "no-disk" || mode == "no-api" {
+	if mode == "no-disk" || mode == "no-api" {
 		fmt.Fprintln(os.Stdout, "ready")
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		return
@@ -524,7 +507,7 @@ func TestStopMissingAndMalformedPreservesStorage(t *testing.T) {
 }
 
 func TestStopUndeliveredRequestKeepsVMUsable(t *testing.T) {
-	dir, child, state := stopFixture(t, true)
+	dir, child, state := stopFixture(t)
 	state.Project = &Project{Branch: "main", Commit: strings.Repeat("a", 40), Workspace: Workspace}
 	if err := saveRecord(dir, state); err != nil {
 		t.Fatal(err)
@@ -546,7 +529,7 @@ func TestStopUndeliveredRequestKeepsVMUsable(t *testing.T) {
 }
 
 func TestStopUndeliveredRetryKeepsPendingShutdown(t *testing.T) {
-	dir, child, state := stopFixture(t, true)
+	dir, child, state := stopFixture(t)
 	err := stopVM(t.Context(), "vm", false, 30*time.Millisecond, func(context.Context, record, string) error { return nil })
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("first stop: %v", err)
@@ -587,7 +570,7 @@ func TestDeleteReleasesNameBeforeRemovingStorage(t *testing.T) {
 	root := privateTempDir(t)
 	t.Setenv("HK_STATE_DIR", root)
 	dir := makeVMDir(t, root, "vm")
-	if err := saveRecord(dir, record{}); err != nil {
+	if err := saveRecord(dir, currentRecord(t)); err != nil {
 		t.Fatal(err)
 	}
 	original := removeVMStorage

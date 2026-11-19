@@ -13,7 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const shutdownCapability = "ctrl-alt-del-v1"
 const shutdownTimeout = 30 * time.Second
 
 type shutdownRequest func(context.Context, record, string) error
@@ -38,13 +37,6 @@ func stopVM(ctx context.Context, name string, force bool, timeout time.Duration,
 	}
 	if current.PID == 0 {
 		return recordStopped(dir, state)
-	}
-	if !force && current.Shutdown != shutdownCapability {
-		return fmt.Errorf("VM %s does not support graceful shutdown; use hk stop --force %s to stop it while preserving its disk (buffered guest data may be lost)", name, name)
-	}
-	current, err = ensureInstanceID(dir, current)
-	if err != nil {
-		return err
 	}
 	fd, err := unix.PidfdOpen(current.PID, 0)
 	if errors.Is(err, unix.ESRCH) {
@@ -192,7 +184,7 @@ func reconcileStopProcess(dir string, state record) (record, error) {
 		return record{}, errors.New("multiple VM processes use this configuration; state retained")
 	}
 	process := processes[0]
-	if state.BootID != "" && state.BootID != boot {
+	if state.BootID != boot {
 		return record{}, errors.New("host boot identity disagrees with a live VM process; refusing to signal it")
 	}
 	if state.PID != 0 && (state.PID != process.PID || state.StartTime != process.StartTime) {
