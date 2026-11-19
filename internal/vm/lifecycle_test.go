@@ -51,8 +51,8 @@ func TestImageDir(t *testing.T) {
 	t.Chdir(root)
 	for _, tc := range []struct{ name, image, cache, home, want string }{
 		{name: "explicit", image: "images/../chosen", cache: "ignored", want: filepath.Join(root, "chosen")},
-		{name: "xdg", cache: root, home: "ignored", want: filepath.Join(root, "habikat", "image")},
-		{name: "home", home: root, want: filepath.Join(root, ".cache", "habikat", "image")},
+		{name: "xdg", cache: root, home: "ignored", want: filepath.Join(root, "habikat", defaultImageName)},
+		{name: "home", home: root, want: filepath.Join(root, ".cache", "habikat", defaultImageName)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HK_IMAGE_DIR", tc.image)
@@ -382,7 +382,11 @@ func makeVMDir(t *testing.T, root, name string) string {
 }
 
 func firecrackerArgs(dir string) []string {
-	return []string{"firecracker", "--api-sock", filepath.Join(dir, "api.sock"), "--config-file", filepath.Join(dir, "config.json")}
+	args := []string{"firecracker", "--api-sock", filepath.Join(dir, "api.sock"), "--config-file", filepath.Join(dir, "config.json")}
+	if nixosExperiment {
+		args = append(args, "--enable-pci")
+	}
+	return args
 }
 
 type testProcess struct {

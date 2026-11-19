@@ -50,8 +50,9 @@ type artifactRef struct {
 }
 
 type launchArtifacts struct {
-	Firecracker artifactRef `json:"firecracker"`
-	Kernel      artifactRef `json:"kernel"`
+	Firecracker artifactRef     `json:"firecracker"`
+	Kernel      artifactRef     `json:"kernel"`
+	NixOS       *nixosArtifacts `json:"nixos,omitempty"`
 }
 
 type record struct {
@@ -67,11 +68,12 @@ type record struct {
 	Ready           bool             `json:"ready"`
 }
 
-const currentRecordVersion = 1
+const currentRecordVersion = 2
 
 type storedRecord struct {
 	record
 	Version              int    `json:"version"`
+	Profile              string `json:"profile"`
 	SourceDirectoryBytes []byte `json:"source_directory_bytes,omitempty"`
 }
 
@@ -87,7 +89,7 @@ func stateHome() (string, error) {
 		}
 		base = filepath.Join(home, ".local", "share")
 	}
-	return filepath.Abs(filepath.Join(base, "habikat"))
+	return filepath.Abs(filepath.Join(base, defaultStateName))
 }
 
 func privateDir(path string) error {
@@ -145,7 +147,7 @@ func saveRecord(dir string, state record) error {
 }
 
 func encodeRecord(state record) ([]byte, error) {
-	stored := storedRecord{record: state, Version: currentRecordVersion}
+	stored := storedRecord{record: state, Version: currentRecordVersion, Profile: imageProfile}
 	if !utf8.ValidString(state.SourceDirectory) {
 		stored.SourceDirectoryBytes = []byte(state.SourceDirectory)
 		stored.SourceDirectory = ""
@@ -185,7 +187,7 @@ func readRecord(dir string) (record, error) {
 	return decodeRecord(data)
 }
 
-var requiredRecordFields = []string{"version", "launch", "boot_id", "instance_id", "pid", "start_time", "ready"}
+var requiredRecordFields = []string{"version", "profile", "launch", "boot_id", "instance_id", "pid", "start_time", "ready"}
 
 func decodeRecord(data []byte) (record, error) {
 	if !utf8.Valid(data) {
@@ -203,6 +205,9 @@ func decodeRecord(data []byte) (record, error) {
 	}
 	if err := requireCurrentRecordFields(data); err != nil {
 		return record{}, err
+	}
+	if stored.Profile != imageProfile {
+		return record{}, errors.New("unsupported or corrupt VM state: wrong image profile")
 	}
 	if stored.Version != currentRecordVersion {
 		return record{}, fmt.Errorf("unsupported or corrupt VM state: version %d is unsupported (expected %d)", stored.Version, currentRecordVersion)
@@ -264,7 +269,7 @@ func validateRecord(state record) error {
 	if state.Launch == nil {
 		return errors.New("missing launch artifacts")
 	}
-	if !validLaunchArtifacts(*state.Launch) {
+	if !validLaunchArtifacts(*state.Launch) || (state.Launch.NixOS != nil) != nixosExperiment {
 		return errors.New("invalid VM launch artifacts")
 	}
 	if state.Project != nil {
@@ -287,6 +292,12 @@ func validProcessIdentity(state record) bool {
 var validDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func validLaunchArtifacts(launch launchArtifacts) bool {
+	if launch.NixOS != nil {
+		n := launch.NixOS
+		if !validArtifact(n.Initrd) || !validArtifact(n.System) || !validArtifact(n.Metadata) || validateNixosBoot(n.Boot) != nil {
+			return false
+		}
+	}
 	return validArtifact(launch.Firecracker) && validArtifact(launch.Kernel) && filepath.Base(launch.Firecracker.Path) == "firecracker"
 }
 

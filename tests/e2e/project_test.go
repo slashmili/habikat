@@ -117,7 +117,7 @@ test "$(git for-each-ref --format='%(refname)')" = ` + quote("refs/heads/"+branc
 git fsck --full
 printf 'PROJECT_OK\n'
 `
-	if out := h.must(checks, "attach", "project-one"); !strings.Contains(out, "PROJECT_OK") || !strings.Contains(out, "git version 2.52.1") {
+	if out := h.must(checks, "attach", "project-one"); !strings.Contains(out, "PROJECT_OK") || !strings.Contains(out, expectedGuestGit) {
 		t.Fatalf("guest checks: %s", out)
 	}
 	testTerminal(t, h, "project-one", "/home/hk/workspace")

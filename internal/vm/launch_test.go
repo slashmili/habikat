@@ -87,3 +87,18 @@ func TestWriteLaunchConfigReplacesStaleConfig(t *testing.T) {
 		t.Fatalf("config mode: %v %v", info, err)
 	}
 }
+
+func TestPrivateDisksRejectSharedInodes(t *testing.T) {
+	dir := privateTempDir(t)
+	for _, name := range []string{"rootfs.ext4", "seed.ext4"} {
+		writeTestFile(t, filepath.Join(dir, name), []byte("valuable data"))
+	}
+	outside := filepath.Join(privateTempDir(t), "sibling-disk")
+	if err := os.Link(filepath.Join(dir, "rootfs.ext4"), outside); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireUnusedDisks(dir); err == nil {
+		t.Fatal("accepted a private disk shared with another directory")
+	}
+	assertFileContents(t, outside, []byte("valuable data"))
+}

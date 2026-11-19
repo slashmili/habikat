@@ -36,7 +36,7 @@ func startStopFixture(t *testing.T, mode string) (string, *testProcess) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command(exe)
-	cmd.Args = []string{"firecracker", "--api-sock", filepath.Join(dir, "api.sock"), "--config-file", filepath.Join(dir, "config.json")}
+	cmd.Args = firecrackerArgs(dir)
 	cmd.Env = append(os.Environ(), "HABIKAT_STOP_TEST_CHILD="+mode, "HABIKAT_STOP_TEST_DIR="+dir, "GORACE=atexit_sleep_ms=0")
 	input, err := cmd.StdinPipe()
 	if err != nil {

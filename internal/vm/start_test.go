@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -84,10 +85,20 @@ func startImageFixture(t *testing.T) (string, launchArtifacts) {
 		t.Fatal(err)
 	}
 	writeManifest(t, image, map[string]string{"firecracker": firecracker, "vmlinux": kernel, "shutdown": shutdownCapability})
-	return image, launchArtifacts{
+	launch := testProfileLaunch(&launchArtifacts{
 		Firecracker: artifactRef{Path: filepath.Join(image, "firecracker"), SHA256: firecracker},
 		Kernel:      artifactRef{Path: filepath.Join(image, "vmlinux"), SHA256: kernel},
+	})
+	if launch.NixOS != nil {
+		data, _ := json.Marshal(launch.NixOS.Boot)
+		writeTestFile(t, launch.NixOS.Initrd.Path, []byte("initrd"))
+		writeTestFile(t, launch.NixOS.System.Path, []byte("system"))
+		writeTestFile(t, launch.NixOS.Metadata.Path, data)
+		launch.NixOS.Initrd.SHA256, _ = fileDigest(launch.NixOS.Initrd.Path)
+		launch.NixOS.System.SHA256, _ = fileDigest(launch.NixOS.System.Path)
+		launch.NixOS.Metadata.SHA256, _ = fileDigest(launch.NixOS.Metadata.Path)
 	}
+	return image, *launch
 }
 
 func startFixture(t *testing.T) startEnv {
@@ -208,7 +219,7 @@ func TestStartBootsStoppedVMWithRecordedArtifacts(t *testing.T) {
 	if err != nil || current.BootID != boot {
 		t.Fatalf("boot identity = %q, want %q (%v)", current.BootID, boot, err)
 	}
-	if current.Launch == nil || *current.Launch != *env.state.Launch {
+	if current.Launch == nil || !reflect.DeepEqual(current.Launch, env.state.Launch) {
 		t.Fatalf("launch artifacts changed: %+v", current.Launch)
 	}
 	if launches := env.launches(t); len(launches) != 2 || launches[1] != env.state.Launch.Kernel.Path {
@@ -357,7 +368,7 @@ func TestStartCancellationStopsLaunchedProcess(t *testing.T) {
 
 func TestStartAdoptsProcessWithUnpublishedPID(t *testing.T) {
 	env := startFixture(t)
-	if err := writeLaunchConfig(env.dir, env.state.Launch.Kernel.Path); err != nil {
+	if err := writeImageLaunchConfig(env.dir, *env.state.Launch); err != nil {
 		t.Fatal(err)
 	}
 	log, err := os.OpenFile(filepath.Join(env.dir, "console.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
@@ -586,7 +597,7 @@ func TestStartIgnoresStaleRuntimeIdentity(t *testing.T) {
 func TestStartRefusesRecordWithoutLaunchArtifacts(t *testing.T) {
 	env := startFixture(t)
 	writeTestFile(t, filepath.Join(env.dir, "state.json"), recordWithoutField(t, env.state, "launch"))
-	if err := writeLaunchConfig(env.dir, env.state.Launch.Kernel.Path); err != nil {
+	if err := writeImageLaunchConfig(env.dir, *env.state.Launch); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HK_IMAGE_DIR", env.image)
@@ -649,7 +660,12 @@ func TestStartRecordRejectsInvalidLaunchArtifacts(t *testing.T) {
 		})
 	}
 	valid := `{"firecracker":{"path":"/i/firecracker","sha256":"` + digest + `"},"kernel":{"path":"/i/vmlinux","sha256":"` + digest + `"}}`
-	state, err := decodeRecord(currentRecordJSON(t, `{"launch":`+valid+`}`))
+	var launch launchArtifacts
+	if err := json.Unmarshal([]byte(valid), &launch); err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(testProfileLaunch(&launch))
+	state, err := decodeRecord(currentRecordJSON(t, `{"launch":`+string(encoded)+`}`))
 	if err != nil || state.Launch == nil || state.Launch.Kernel.Path != "/i/vmlinux" {
 		t.Fatalf("valid launch record: %+v %v", state.Launch, err)
 	}
@@ -674,7 +690,7 @@ func FuzzStartPreservesData(f *testing.F) {
 		var holder *testProcess
 		if live {
 			t.Setenv("HABIKAT_VM_TEST_DISK", filepath.Join(env.dir, "rootfs.ext4"))
-			holder = startTestProcess(t, []string{"firecracker", "--api-sock", filepath.Join(env.dir, "api.sock"), "--config-file", filepath.Join(env.dir, "config.json")})
+			holder = startTestProcess(t, firecrackerArgs(env.dir))
 		}
 		writeTestFile(t, filepath.Join(env.dir, "state.json"), []byte(data))
 		_, _ = startVM(t.Context(), "vm", neverReady, 200*time.Millisecond)
@@ -713,7 +729,14 @@ func runStartTestChild(args []string) {
 		fmt.Println("fixture boot failure")
 		os.Exit(1)
 	}
-	disk, err := os.OpenFile(settings.Drives[0].Path, os.O_RDWR, 0)
+	diskPath := ""
+	for _, drive := range settings.Drives {
+		if !drive.ReadOnly {
+			diskPath = drive.Path
+			break
+		}
+	}
+	disk, err := os.OpenFile(diskPath, os.O_RDWR, 0)
 	if err != nil {
 		fmt.Println("fixture disk:", err)
 		os.Exit(2)
@@ -755,7 +778,8 @@ type startChildConfig struct {
 		Kernel string `json:"kernel_image_path"`
 	} `json:"boot-source"`
 	Drives []struct {
-		Path string `json:"path_on_host"`
+		Path     string `json:"path_on_host"`
+		ReadOnly bool   `json:"is_read_only"`
 	} `json:"drives"`
 	Vsock struct {
 		Path string `json:"uds_path"`
@@ -811,7 +835,7 @@ func TestStartRefusesToAdoptIncompleteCreateProcess(t *testing.T) {
 	if err := saveRecord(env.dir, incomplete); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeLaunchConfig(env.dir, env.state.Launch.Kernel.Path); err != nil {
+	if err := writeImageLaunchConfig(env.dir, *env.state.Launch); err != nil {
 		t.Fatal(err)
 	}
 	log, err := os.OpenFile(filepath.Join(env.dir, "console.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
@@ -947,10 +971,8 @@ func FuzzLaunchArtifactRecord(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, path, digest string) {
 		data, err := encodeRecord(currentRecordWith(t, func(s *record) {
-			s.Launch = &launchArtifacts{
-				Firecracker: artifactRef{Path: path, SHA256: digest},
-				Kernel:      artifactRef{Path: path, SHA256: digest},
-			}
+			s.Launch.Firecracker = artifactRef{Path: path, SHA256: digest}
+			s.Launch.Kernel = artifactRef{Path: path, SHA256: digest}
 		}))
 		if err != nil {
 			return
@@ -971,7 +993,7 @@ func FuzzLaunchArtifactRecord(f *testing.F) {
 
 func TestStartRefusesToAdoptProcessNotHoldingRootDisk(t *testing.T) {
 	env := startFixture(t)
-	if err := writeLaunchConfig(env.dir, env.state.Launch.Kernel.Path); err != nil {
+	if err := writeImageLaunchConfig(env.dir, *env.state.Launch); err != nil {
 		t.Fatal(err)
 	}
 	decoy := filepath.Join(shortPrivateDir(t, "hk-decoy-"), "decoy.ext4")

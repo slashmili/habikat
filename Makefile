@@ -30,7 +30,7 @@ mutate:
 	fi; \
 	go tool gremlins unleash --config .gremlins.yaml --output "$$MUTATE_OUTPUT" "$$@" -- "$$MUTATE_PATH"
 
-fuzz: fuzz-cli fuzz-vm fuzz-import fuzz-identity fuzz-fetch fuzz-list fuzz-lifecycle
+fuzz: fuzz-cli fuzz-vm fuzz-import fuzz-identity fuzz-fetch fuzz-list fuzz-lifecycle nixos-fuzz
 
 test-cli:
 	go test -race ./cmd/hk
@@ -88,3 +88,25 @@ fuzz-lifecycle:
 	go test ./cmd/hk -run '^$$' -fuzz '^FuzzStartArgs$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzStartPreservesData$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzLaunchArtifactRecord$$' -fuzztime=10s -parallel=2
+
+.PHONY: nixos-image nixos-build nixos-test nixos-fuzz nixos-e2e
+
+nixos-image:
+	python3 experiments/build_nixos.py
+
+nixos-build:
+	go build -tags=nixexperiment -o bin/hk-nixos ./cmd/hk
+
+nixos-test:
+	go test -race -tags=nixexperiment ./...
+	go test -race -tags=nixexperiment,integration ./internal/repository ./internal/vm
+	go vet -tags=nixexperiment ./...
+	python3 -m unittest discover -s experiments -p 'test_*.py' -v
+
+nixos-fuzz:
+	go test -tags=nixexperiment ./internal/vm -run '^$$' -fuzz '^FuzzNixosManifest$$' -fuzztime=10s -parallel=2
+	go test -tags=nixexperiment ./internal/vm -run '^$$' -fuzz '^FuzzNixosBoot$$' -fuzztime=10s -parallel=2
+	go test -tags=nixexperiment ./internal/vm -run '^$$' -fuzz '^FuzzNixosArtifactValidation$$' -fuzztime=10s -parallel=2
+
+nixos-e2e:
+	go test -race -tags=e2e,nixexperiment ./tests/e2e -v -count=1 -timeout=20m

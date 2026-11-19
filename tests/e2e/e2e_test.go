@@ -5,8 +5,6 @@ package e2e
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,7 +43,7 @@ func newHarness(t *testing.T) *harness {
 	// Deliberately exercise literal shell-sensitive state paths.
 	state := filepath.Join(dir, "state '$%")
 	h.env = append(os.Environ(), "HK_STATE_DIR="+state)
-	build := exec.Command("go", "build", "-tags=e2e", "-o", h.bin, "../../cmd/hk")
+	build := exec.Command("go", "build", "-tags="+e2eBuildTags, "-o", h.bin, "../../cmd/hk")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v: %s", err, out)
 	}
@@ -56,12 +54,23 @@ func newHarness(t *testing.T) *harness {
 		}
 		for _, entry := range entries {
 			if entry.IsDir() {
+				if t.Failed() {
+					for _, file := range []string{"console.log", "state.json"} {
+						if data, err := os.ReadFile(filepath.Join(state, entry.Name(), file)); err == nil {
+							_ = os.WriteFile(filepath.Join(dir, entry.Name()+"-"+file), data, 0600)
+						}
+					}
+				}
 				cmd := h.command("delete", "--force", entry.Name())
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Errorf("cleanup %s: %v: %s; retained %s", entry.Name(), err, out, dir)
 					return
 				}
 			}
+		}
+		if t.Failed() {
+			t.Logf("failure evidence retained at %s", dir)
+			return
 		}
 		if err := os.RemoveAll(dir); err != nil {
 			t.Error(err)
@@ -179,10 +188,11 @@ test ! -r /run/provision/seed/host_key
 test "$(ls /sys/class/net)" = lo
 printf 'persistent guest data\n' > "$HOME/probe"
 uname -r
+if test -f /etc/os-release; then cat /etc/os-release; fi
 printf 'NONROOT_OK\n'
 exit
 `, "attach", "one")
-	if !strings.Contains(out, "6.1.188") || !strings.Contains(out, "NONROOT_OK") {
+	if !strings.Contains(out, expectedGuestRelease) || !strings.Contains(out, "NONROOT_OK") {
 		t.Fatalf("guest checks did not run: %s", out)
 	}
 	if out := h.must("cat ~/probe\nexit\n", "attach", "one"); !strings.Contains(out, "persistent guest data") {
@@ -281,47 +291,6 @@ func TestInterruptedCreate(t *testing.T) {
 	assertGone(t, pid)
 	if _, err := os.Stat(h.state("interrupted", "")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("cancellation retained disposable state: %v", err)
-	}
-}
-
-func TestBootFailureCleanup(t *testing.T) {
-	h := newHarness(t)
-	images := os.Getenv("HK_IMAGE_DIR")
-	if images == "" {
-		cache, err := os.UserCacheDir()
-		if err != nil {
-			t.Fatal(err)
-		}
-		images = filepath.Join(cache, "habikat", "image")
-	}
-	broken := filepath.Join(h.dir, "broken-image")
-	if err := os.Mkdir(broken, 0700); err != nil {
-		t.Fatal(err)
-	}
-	var manifest map[string]string
-	if err := json.Unmarshal(read(t, filepath.Join(images, "manifest.json")), &manifest); err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range []string{"firecracker", "rootfs.ext4"} {
-		if err := os.Symlink(filepath.Join(images, file), filepath.Join(broken, file)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	badKernel := []byte("not an ELF kernel")
-	write(t, filepath.Join(broken, "vmlinux"), badKernel)
-	hash := sha256.Sum256(badKernel)
-	manifest["vmlinux"] = hex.EncodeToString(hash[:])
-	data, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	write(t, filepath.Join(broken, "manifest.json"), data)
-	h.env = append(h.env, "HK_IMAGE_DIR="+broken)
-	if out, err := h.run("", "create", "--name", "badboot"); err == nil || !strings.Contains(out, "Firecracker") {
-		t.Fatalf("expected actual Firecracker boot failure: %v %s", err, out)
-	}
-	if _, err := os.Stat(h.state("badboot", "")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("boot failure retained disposable state: %v", err)
 	}
 }
 

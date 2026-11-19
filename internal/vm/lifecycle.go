@@ -25,7 +25,7 @@ func imageDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Abs(filepath.Join(cache, "habikat", "image"))
+	return filepath.Abs(filepath.Join(cache, "habikat", defaultImageName))
 }
 
 type CreateOptions struct {
@@ -99,7 +99,7 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 	if err != nil {
 		return err
 	}
-	image, err := verifyImages(images)
+	image, err := verifyActiveImages(images)
 	if err != nil {
 		return err
 	}
@@ -143,17 +143,17 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 	if err := provisionKeys(dir, name); err != nil {
 		return err
 	}
-	if err := copyVerifiedRootDisk(ctx, image.rootDisk, dir); err != nil {
+	if err := provisionImageDisk(ctx, image, dir); err != nil {
 		return err
 	}
-	seed := exec.CommandContext(ctx, "mkfs.ext4", "-q", "-F", "-O", "^has_journal", "-d", filepath.Join(dir, "seed"), filepath.Join(dir, "seed.ext4"), "2048")
+	seed := exec.CommandContext(ctx, "mkfs.ext4", "-q", "-F", "-O", "^has_journal", "-E", "root_owner=0:0", "-d", filepath.Join(dir, "seed"), filepath.Join(dir, "seed.ext4"), "2048")
 	if output, err := seed.CombinedOutput(); err != nil {
 		return fmt.Errorf("build seed disk: %w: %s", err, output)
 	}
 	if err := os.RemoveAll(filepath.Join(dir, "seed")); err != nil {
 		return err
 	}
-	if err := writeLaunchConfig(dir, state.Launch.Kernel.Path); err != nil {
+	if err := writeImageLaunchConfig(dir, *state.Launch); err != nil {
 		return err
 	}
 	configPath := filepath.Join(dir, "config.json")
@@ -185,7 +185,7 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 			}
 			return errors.Join(fmt.Errorf("Firecracker exited before SSH was ready:\n%s", logData), logErr)
 		}
-		if last = checkSSH(ctx, dir); last == nil {
+		if last = checkGuestReady(ctx, dir); last == nil {
 			if snapshot != nil {
 				if err := importProject(ctx, dir, snapshot); err != nil {
 					return fmt.Errorf("import project (check available guest disk space): %w", err)
@@ -238,7 +238,11 @@ func cleanupFailedCreate(state record, dir, name string) error {
 }
 
 func startDetachedFirecracker(ctx context.Context, firecracker, configPath string, log *os.File) (int, error) {
-	cmd := exec.Command(firecracker, "--api-sock", filepath.Join(filepath.Dir(configPath), "api.sock"), "--config-file", configPath)
+	args := []string{"--api-sock", filepath.Join(filepath.Dir(configPath), "api.sock"), "--config-file", configPath}
+	if nixosExperiment {
+		args = append(args, "--enable-pci")
+	}
+	cmd := exec.Command(firecracker, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout, cmd.Stderr = log, log
@@ -283,7 +287,13 @@ func processOwnsConfig(pid int, dir string) (bool, error) {
 	if filepath.Base(args[0]) != "firecracker" {
 		return false, nil
 	}
-	return len(args) == 6 && args[1] == "--api-sock" && args[2] == filepath.Join(dir, "api.sock") && args[3] == "--config-file" && args[4] == filepath.Join(dir, "config.json"), nil
+	if nixosExperiment {
+		if len(args) != 7 || args[5] != "--enable-pci" {
+			return false, nil
+		}
+		args = append(args[:5], args[6])
+	}
+	return len(args) == 6 && args[5] == "" && args[1] == "--api-sock" && args[2] == filepath.Join(dir, "api.sock") && args[3] == "--config-file" && args[4] == filepath.Join(dir, "config.json"), nil
 }
 
 func sameProcess(state record, dir string) bool {

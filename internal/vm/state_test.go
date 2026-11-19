@@ -97,8 +97,8 @@ func TestStateHome(t *testing.T) {
 		name, state, data, home, want string
 	}{
 		{name: "explicit", state: "state/../chosen", data: "ignored", want: filepath.Join(root, "chosen")},
-		{name: "xdg", data: "data", home: "ignored", want: filepath.Join(root, "data", "habikat")},
-		{name: "home", home: root, want: filepath.Join(root, ".local", "share", "habikat")},
+		{name: "xdg", data: "data", home: "ignored", want: filepath.Join(root, "data", defaultStateName)},
+		{name: "home", home: root, want: filepath.Join(root, ".local", "share", defaultStateName)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HK_STATE_DIR", tc.state)
@@ -187,10 +187,10 @@ func currentRecord(t *testing.T) record {
 		t.Fatal(err)
 	}
 	return record{
-		Launch: &launchArtifacts{
+		Launch: testProfileLaunch(&launchArtifacts{
 			Firecracker: artifactRef{Path: "/images/firecracker", SHA256: strings.Repeat("a", 64)},
 			Kernel:      artifactRef{Path: "/images/vmlinux", SHA256: strings.Repeat("b", 64)},
-		},
+		}),
 		SourceDirectory: "/source",
 		BootID:          boot,
 		InstanceID:      strings.Repeat("1", 32),
@@ -403,10 +403,10 @@ func TestRecordRejectsInvalidInstanceID(t *testing.T) {
 func currentRecordSeed(f *testing.F, source string) string {
 	f.Helper()
 	data, err := encodeRecord(record{
-		Launch: &launchArtifacts{
+		Launch: testProfileLaunch(&launchArtifacts{
 			Firecracker: artifactRef{Path: "/images/firecracker", SHA256: strings.Repeat("a", 64)},
 			Kernel:      artifactRef{Path: "/images/vmlinux", SHA256: strings.Repeat("b", 64)},
-		},
+		}),
 		SourceDirectory: source,
 		BootID:          "01234567-89ab-cdef-0123-456789abcdef",
 		InstanceID:      strings.Repeat("1", 32),

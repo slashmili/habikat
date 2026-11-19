@@ -21,7 +21,7 @@ type StartResult struct {
 type readinessCheck func(context.Context, string) error
 
 func Start(ctx context.Context, name string) (StartResult, error) {
-	return startVM(ctx, name, checkSSH, startReadyTimeout)
+	return startVM(ctx, name, checkGuestReady, startReadyTimeout)
 }
 
 func startVM(ctx context.Context, name string, ready readinessCheck, timeout time.Duration) (_ StartResult, result error) {
@@ -143,6 +143,9 @@ func requireUnusedDisks(dir string) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("VM disk %s must be a regular file", name)
 		}
+		if info.Sys().(*syscall.Stat_t).Nlink != 1 {
+			return fmt.Errorf("VM disk %s must not be hard linked; refusing shared private storage", name)
+		}
 		disks = append(disks, info)
 	}
 	pid, err := processHoldingFile(disks)
@@ -237,7 +240,7 @@ type startAttempt struct {
 
 func launchFirecracker(ctx context.Context, dir string, state record, launch launchArtifacts) (startAttempt, error) {
 	attempt := startAttempt{state: state, console: consoleSince{dir: dir}}
-	if err := writeLaunchConfig(dir, launch.Kernel.Path); err != nil {
+	if err := writeImageLaunchConfig(dir, launch); err != nil {
 		return attempt, err
 	}
 	log, err := openPrivateRegular(filepath.Join(dir, "console.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND)

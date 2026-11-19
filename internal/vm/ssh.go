@@ -90,11 +90,22 @@ func quoteSSHExecutable(exe string) string {
 }
 
 func checkSSH(ctx context.Context, dir string) error {
+	return checkGuestCommand(ctx, dir, `test "$(id -u)" = 1000 && test -w "$HOME"`)
+}
+
+func checkGuestReady(ctx context.Context, dir string) error {
+	if !nixosExperiment {
+		return checkSSH(ctx, dir)
+	}
+	return checkGuestCommand(ctx, dir, `test "$(id -u)" = 1000 && test -w "$HOME" && pg_isready -h /run/postgresql -U hk -d hk && test "$(psql -XAt -h /run/postgresql -U hk -d hk -c 'select 1')" = 1`)
+}
+
+func checkGuestCommand(ctx context.Context, dir, command string) error {
 	args, err := sshArgs()
 	if err != nil {
 		return err
 	}
-	args = append(args, "-T", "hk@habikat", "test \"$(id -u)\" = 1000 && test -w \"$HOME\"")
+	args = append(args, "-T", "hk@habikat", command)
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ssh", args...)

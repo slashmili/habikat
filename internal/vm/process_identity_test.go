@@ -19,7 +19,11 @@ func TestProcessOwnsConfigRequiresEveryArgument(t *testing.T) {
 		owned bool
 	}{
 		{"no api", []string{"firecracker", "--no-api", "--config-file", config}, false},
-		{"api", []string{"firecracker", "--api-sock", socket, "--config-file", config}, true},
+		{"api", []string{"firecracker", "--api-sock", socket, "--config-file", config}, !nixosExperiment},
+		{"pci", []string{"firecracker", "--api-sock", socket, "--config-file", config, "--enable-pci"}, nixosExperiment},
+		{"duplicate pci", []string{"firecracker", "--api-sock", socket, "--config-file", config, "--enable-pci", "--enable-pci"}, false},
+		{"pci value", []string{"firecracker", "--api-sock", socket, "--config-file", config, "--enable-pci=true"}, false},
+		{"pci plus extra", []string{"firecracker", "--api-sock", socket, "--config-file", config, "--enable-pci", "--no-api"}, false},
 		{"api wrong socket flag", []string{"firecracker", "--api-socket", socket, "--config-file", config}, false},
 		{"api other socket", []string{"firecracker", "--api-sock", filepath.Join(other, "api.sock"), "--config-file", config}, false},
 		{"api wrong config flag", []string{"firecracker", "--api-sock", socket, "--config", config}, false},

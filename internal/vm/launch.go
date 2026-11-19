@@ -82,9 +82,24 @@ func verifyImageFile(path, expected string) error {
 }
 
 func verifyLaunchArtifacts(launch launchArtifacts) error {
-	for _, artifact := range []artifactRef{launch.Firecracker, launch.Kernel} {
+	for _, artifact := range launchFiles(launch) {
 		if err := verifyArtifact(artifact); err != nil {
 			return err
+		}
+	}
+	if launch.NixOS != nil {
+		data, err := os.ReadFile(launch.NixOS.Metadata.Path)
+		if err != nil {
+			return err
+		}
+		boot, err := decodeNixosBoot(data)
+		if err != nil {
+			return err
+		}
+		want, _ := json.Marshal(launch.NixOS.Boot)
+		got, _ := json.Marshal(boot)
+		if string(want) != string(got) {
+			return errors.New("recorded NixOS boot metadata differs from verified artifact")
 		}
 	}
 	return nil
