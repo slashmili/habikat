@@ -2,12 +2,9 @@ package vm
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,13 +46,12 @@ func verifyImages(dir string) error {
 		if err != nil {
 			return err
 		}
-		hash := sha256.New()
-		_, err = io.Copy(hash, file)
+		digest, err := readerSHA256(file)
 		err = errors.Join(err, file.Close())
 		if err != nil {
 			return err
 		}
-		if hex.EncodeToString(hash.Sum(nil)) != manifest[name] {
+		if digest != manifest[name] {
 			return fmt.Errorf("SHA-256 mismatch for %s", name)
 		}
 	}
@@ -162,15 +158,7 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 			result = errors.Join(result, cleanupFailedCreate(state, dir, name))
 		}
 	}()
-	state.Shutdown, err = imageShutdownCapability(images)
-	if err != nil {
-		return err
-	}
-	state.BootID, err = hostBootID()
-	if err != nil {
-		return err
-	}
-	state.InstanceID, err = newInstanceID()
+	state, err = initialCreateRecord(images, sourceDirectory)
 	if err != nil {
 		return err
 	}
@@ -195,21 +183,16 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 	if err := os.RemoveAll(filepath.Join(dir, "seed")); err != nil {
 		return err
 	}
-	config := firecrackerConfig(images, dir)
-	data, err := json.Marshal(config)
-	if err != nil {
+	if err := writeLaunchConfig(dir, state.Launch.Kernel.Path); err != nil {
 		return err
 	}
 	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, data, 0600); err != nil {
-		return err
-	}
 	log, err := os.OpenFile(filepath.Join(dir, "console.log"), os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
 	defer log.Close()
-	state.PID, err = startDetachedFirecracker(ctx, images, configPath, log)
+	state.PID, err = startDetachedFirecracker(ctx, state.Launch.Firecracker.Path, configPath, log)
 	if err != nil {
 		return err
 	}
@@ -239,7 +222,7 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			state.Ready = true
+			state.Creating, state.Ready = false, true
 			return saveRecord(dir, state)
 		}
 		select {
@@ -250,6 +233,26 @@ func create(ctx context.Context, name string, snapshot *repository.Snapshot, sou
 	}
 }
 
+func initialCreateRecord(images, sourceDirectory string) (record, error) {
+	state := record{Creating: true, SourceDirectory: sourceDirectory}
+	var err error
+	if state.Shutdown, err = imageShutdownCapability(images); err != nil {
+		return record{}, err
+	}
+	launch, err := imageLaunchArtifacts(images)
+	if err != nil {
+		return record{}, err
+	}
+	state.Launch = &launch
+	if state.BootID, err = hostBootID(); err != nil {
+		return record{}, err
+	}
+	if state.InstanceID, err = newInstanceID(); err != nil {
+		return record{}, err
+	}
+	return state, nil
+}
+
 func cleanupFailedCreate(state record, dir, name string) error {
 	if err := stopProcess(state, dir); err != nil {
 		return fmt.Errorf("cleanup failed; run hk delete %s: %w", name, err)
@@ -257,8 +260,8 @@ func cleanupFailedCreate(state record, dir, name string) error {
 	return os.RemoveAll(dir)
 }
 
-func startDetachedFirecracker(ctx context.Context, images, configPath string, log *os.File) (int, error) {
-	cmd := exec.Command(filepath.Join(images, "firecracker"), "--api-sock", filepath.Join(filepath.Dir(configPath), "api.sock"), "--config-file", configPath)
+func startDetachedFirecracker(ctx context.Context, firecracker, configPath string, log *os.File) (int, error) {
+	cmd := exec.Command(firecracker, "--api-sock", filepath.Join(filepath.Dir(configPath), "api.sock"), "--config-file", configPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Stdin = nil
 	cmd.Stdout, cmd.Stderr = log, log
@@ -326,7 +329,7 @@ func sameProcess(state record, dir string) bool {
 func vmNotRunning(name, dir string, state record) error {
 	switch {
 	case !sameProcess(state, dir):
-		return fmt.Errorf("VM %s is stopped; starting a stopped VM is not supported yet; its disk, files, and keys are preserved", name)
+		return fmt.Errorf("VM %s is stopped; run hk start %s; its disk, files, and keys are preserved", name, name)
 	case state.Stopping:
 		return fmt.Errorf("VM %s is shutting down", name)
 	case !state.Ready:

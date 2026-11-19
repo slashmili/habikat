@@ -38,6 +38,10 @@ func TestMain(m *testing.M) {
 		runtime.KeepAlive(disk)
 		os.Exit(0)
 	}
+	if os.Getenv(startTestChildEnv) != "" {
+		runStartTestChild(os.Args)
+		os.Exit(0)
+	}
 	os.Exit(m.Run())
 }
 

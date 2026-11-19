@@ -356,6 +356,10 @@ while :; do sleep 60; done
 			if _, err := os.Stat(h.state("blocked", "rootfs.ext4")); err != nil {
 				t.Fatal(err)
 			}
+			mustStartElsewhere(t, h, "blocked")
+			if out := h.must("cat ~/durable\n", "attach", "blocked"); !strings.Contains(out, "durable before force") {
+				t.Fatalf("start after forced stop lost durable fixture: %s", out)
+			}
 		})
 	}
 }

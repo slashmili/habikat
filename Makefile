@@ -85,3 +85,6 @@ fuzz-list:
 fuzz-lifecycle:
 	go test ./cmd/hk -run '^$$' -fuzz '^FuzzStopArgs$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzStopPreservesData$$' -fuzztime=10s -parallel=2
+	go test ./cmd/hk -run '^$$' -fuzz '^FuzzStartArgs$$' -fuzztime=10s -parallel=2
+	go test ./internal/vm -run '^$$' -fuzz '^FuzzStartPreservesData$$' -fuzztime=10s -parallel=2
+	go test ./internal/vm -run '^$$' -fuzz '^FuzzLaunchArtifactRecord$$' -fuzztime=10s -parallel=2

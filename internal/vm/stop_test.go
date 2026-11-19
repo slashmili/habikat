@@ -276,8 +276,8 @@ func TestAttachStoppedDoesNotSuggestDiscardingWork(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "delete") || !strings.Contains(err.Error(), "preserved") {
 		t.Fatalf("unsafe recovery advice: %v", err)
 	}
-	if !strings.Contains(err.Error(), "is stopped") || !strings.Contains(err.Error(), "not supported yet") {
-		t.Fatalf("stopped VM implies it can be resumed: %v", err)
+	if !strings.Contains(err.Error(), "is stopped") || !strings.Contains(err.Error(), "run hk start vm") {
+		t.Fatalf("stopped VM does not explain how to start it: %v", err)
 	}
 	if strings.Contains(err.Error(), "restart") || strings.Contains(err.Error(), "recreate") {
 		t.Fatalf("unsupported recovery advice: %v", err)

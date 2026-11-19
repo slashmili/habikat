@@ -415,7 +415,7 @@ func testFetchStoppedVM(t *testing.T, f *fetchFixture, name string) {
 	want, refs := vmRecoveryEvidence(t, f.harness, name), hostRefs(t, f)
 	for _, args := range [][]string{{"fetch", name}, {"fetch", "--force", name}} {
 		out, err := f.run("", args...)
-		if err == nil || !strings.Contains(strings.ToLower(out), "running") || !strings.Contains(strings.ToLower(out), "preserv") {
+		if err == nil || !strings.Contains(strings.ToLower(out), "running") || !strings.Contains(strings.ToLower(out), "preserv") || !strings.Contains(out, "hk start "+name) {
 			t.Fatalf("offline fetch did not explain recovery: %v %s", err, out)
 		}
 		if strings.Contains(out, "recreate") || strings.Contains(out, "restart") {

@@ -23,32 +23,11 @@ func Stop(ctx context.Context, name string, force bool) error {
 }
 
 func stopVM(ctx context.Context, name string, force bool, timeout time.Duration, request shutdownRequest) (result error) {
-	if err := ValidateName(name); err != nil {
-		return err
-	}
-	root, err := stateHome()
+	dir, operation, err := lockLifecycle(ctx, name)
 	if err != nil {
 		return err
-	}
-	if err := privateDir(root); err != nil {
-		return fmt.Errorf("open VM %s: %w", name, err)
-	}
-	dir, global, err := lockState(ctx, name)
-	if err != nil {
-		return err
-	}
-	operation, err := lockExistingVM(name, dir)
-	closeErr := global.Close()
-	if err != nil {
-		return errors.Join(err, closeErr)
 	}
 	defer func() { result = errors.Join(result, operation.Close()) }()
-	if closeErr != nil {
-		return closeErr
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	state, err := readStopRecord(dir)
 	if err != nil {
 		return err
@@ -123,6 +102,35 @@ func shutdownRequestFailed(dir string, state record, pendingShutdown bool, err e
 		return errors.Join(err, saveErr)
 	}
 	return fmt.Errorf("shutdown request was not accepted; VM is still running: %w", err)
+}
+
+func lockLifecycle(ctx context.Context, name string) (string, *os.File, error) {
+	if err := ValidateName(name); err != nil {
+		return "", nil, err
+	}
+	root, err := stateHome()
+	if err != nil {
+		return "", nil, err
+	}
+	if err := privateDir(root); err != nil {
+		return "", nil, fmt.Errorf("open VM %s: %w", name, err)
+	}
+	dir, global, err := lockState(ctx, name)
+	if err != nil {
+		return "", nil, err
+	}
+	operation, err := lockExistingVM(name, dir)
+	err = errors.Join(err, global.Close())
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		if operation != nil {
+			err = errors.Join(err, operation.Close())
+		}
+		return "", nil, err
+	}
+	return dir, operation, nil
 }
 
 func lockExistingVM(name, dir string) (*os.File, error) {

@@ -41,16 +41,28 @@ type Project struct {
 	Workspace string `json:"workspace"`
 }
 
+type artifactRef struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+}
+
+type launchArtifacts struct {
+	Firecracker artifactRef `json:"firecracker"`
+	Kernel      artifactRef `json:"kernel"`
+}
+
 type record struct {
-	Shutdown        string   `json:"shutdown,omitempty"`
-	Stopping        bool     `json:"stopping,omitempty"`
-	SourceDirectory string   `json:"source_directory,omitempty"`
-	BootID          string   `json:"boot_id,omitempty"`
-	InstanceID      string   `json:"instance_id,omitempty"`
-	Project         *Project `json:"project,omitempty"`
-	PID             int      `json:"pid"`
-	StartTime       string   `json:"start_time"`
-	Ready           bool     `json:"ready"`
+	Creating        bool             `json:"creating,omitempty"`
+	Launch          *launchArtifacts `json:"launch,omitempty"`
+	Shutdown        string           `json:"shutdown,omitempty"`
+	Stopping        bool             `json:"stopping,omitempty"`
+	SourceDirectory string           `json:"source_directory,omitempty"`
+	BootID          string           `json:"boot_id,omitempty"`
+	InstanceID      string           `json:"instance_id,omitempty"`
+	Project         *Project         `json:"project,omitempty"`
+	PID             int              `json:"pid"`
+	StartTime       string           `json:"start_time"`
+	Ready           bool             `json:"ready"`
 }
 
 type storedRecord struct {
@@ -129,7 +141,11 @@ func saveRecord(dir string, state record) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".state-*")
+	return replaceFile(dir, "state.json", data)
+}
+
+func replaceFile(dir, name string, data []byte) error {
+	f, err := os.CreateTemp(dir, "."+strings.TrimSuffix(name, ".json")+"-*")
 	if err != nil {
 		return err
 	}
@@ -139,7 +155,7 @@ func saveRecord(dir string, state record) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(f.Name(), filepath.Join(dir, "state.json")); err != nil {
+	if err := os.Rename(f.Name(), filepath.Join(dir, name)); err != nil {
 		return err
 	}
 	directory, err := os.Open(dir)
@@ -181,6 +197,9 @@ func decodeRecord(data []byte) (record, error) {
 	if state.Shutdown != "" && state.Shutdown != shutdownCapability {
 		return record{}, errors.New("invalid VM shutdown capability")
 	}
+	if state.Creating && state.Ready {
+		return record{}, errors.New("invalid VM creation state")
+	}
 	if state.Stopping && state.PID == 0 {
 		return record{}, errors.New("invalid stopping VM process identity")
 	}
@@ -196,6 +215,9 @@ func decodeRecord(data []byte) (record, error) {
 	if !validSourceDirectory(state.SourceDirectory) {
 		return record{}, errors.New("invalid VM source directory")
 	}
+	if state.Launch != nil && !validLaunchArtifacts(*state.Launch) {
+		return record{}, errors.New("invalid VM launch artifacts")
+	}
 	if state.Project != nil {
 		p := state.Project
 		if p.Workspace != Workspace || p.Branch == "" || strings.ContainsAny(p.Branch, "\x00\r\n") || !validCommit.MatchString(p.Commit) {
@@ -205,11 +227,22 @@ func decodeRecord(data []byte) (record, error) {
 	return *state, nil
 }
 
-func validSourceDirectory(path string) bool {
-	if path == "" {
-		return true
-	}
+var validDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func validLaunchArtifacts(launch launchArtifacts) bool {
+	return validArtifact(launch.Firecracker) && validArtifact(launch.Kernel) && filepath.Base(launch.Firecracker.Path) == "firecracker"
+}
+
+func validArtifact(artifact artifactRef) bool {
+	return validDigest.MatchString(artifact.SHA256) && validAbsolutePath(artifact.Path)
+}
+
+func validAbsolutePath(path string) bool {
 	return filepath.IsAbs(path) && filepath.Clean(path) == path && !strings.ContainsRune(path, 0)
+}
+
+func validSourceDirectory(path string) bool {
+	return path == "" || validAbsolutePath(path)
 }
 
 func newInstanceID() (string, error) {
