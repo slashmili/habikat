@@ -9,8 +9,7 @@ import (
 	"testing"
 )
 
-func TestRunDelete(t *testing.T) {
-	t.Parallel()
+func TestDeleteReportsResult(t *testing.T) {
 	backendErr := errors.New("VM could not be stopped")
 	for _, tc := range []struct {
 		name       string
@@ -23,164 +22,82 @@ func TestRunDelete(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := t.Context()
 			var out bytes.Buffer
-			calls := 0
-			err := runDelete(
-				ctx,
-				[]string{"demo"},
-				strings.NewReader(""),
-				&out,
-				func(gotCtx context.Context, name string, _ func() error) error {
-					calls++
-					if name != "demo" || gotCtx != ctx {
-						t.Fatalf("delete received name=%q or a different context", name)
-					}
-					if out.Len() != 0 {
-						t.Fatal("printed success before deletion finished")
-					}
-					return tc.backendErr
-				},
-			)
-			if !errors.Is(err, tc.backendErr) || calls != 1 {
-				t.Fatalf("delete error=%v, calls=%d", err, calls)
-			}
-			if out.String() != tc.wantOutput {
-				t.Fatalf("output = %q, want %q", out.String(), tc.wantOutput)
+			err := runDelete(ctx, strings.NewReader(""), &out, "demo", true, func(gotCtx context.Context, name string, _ func() error) error {
+				if name != "demo" || gotCtx != ctx {
+					t.Fatalf("delete received name=%q or a different context", name)
+				}
+				if out.Len() != 0 {
+					t.Fatal("printed success before deletion finished")
+				}
+				return tc.backendErr
+			})
+			if !errors.Is(err, tc.backendErr) || out.String() != tc.wantOutput {
+				t.Fatalf("error = %v, output = %q", err, out.String())
 			}
 		})
 	}
 }
 
-func TestRunDeleteCancellation(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name       string
-		backendErr error
-	}{
-		{name: "approval declined", backendErr: errDeleteCancelled},
-		{name: "wrapped approval declined", backendErr: fmt.Errorf("confirmation: %w", errDeleteCancelled)},
-		{name: "context cancelled", backendErr: context.Canceled},
-		{name: "wrapped context cancelled", backendErr: fmt.Errorf("deletion: %w", context.Canceled)},
+func TestDeleteCancellation(t *testing.T) {
+	for _, backendErr := range []error{
+		errDeleteCancelled,
+		fmt.Errorf("confirmation: %w", errDeleteCancelled),
+		context.Canceled,
+		fmt.Errorf("deletion: %w", context.Canceled),
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var out bytes.Buffer
-			calls := 0
-			err := runDelete(
-				t.Context(),
-				[]string{"demo"},
-				strings.NewReader(""),
-				&out,
-				func(context.Context, string, func() error) error {
-					calls++
-					if out.Len() != 0 {
-						t.Fatal("printed result before deletion returned")
-					}
-					return tc.backendErr
-				},
-			)
-			if err != nil || calls != 1 {
-				t.Fatalf("cancelled deletion error=%v, calls=%d", err, calls)
-			}
-			if want := "Deletion of demo cancelled.\n"; out.String() != want {
-				t.Fatalf("output = %q, want %q", out.String(), want)
-			}
+		var out bytes.Buffer
+		err := runDelete(t.Context(), strings.NewReader(""), &out, "demo", false, func(context.Context, string, func() error) error {
+			return backendErr
 		})
-	}
-}
-
-func TestRunDeleteCancellationOutputFailure(t *testing.T) {
-	t.Parallel()
-	want := errors.New("output unavailable")
-	for _, tc := range []struct {
-		name       string
-		backendErr error
-	}{
-		{name: "approval declined", backendErr: errDeleteCancelled},
-		{name: "context cancelled", backendErr: context.Canceled},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			err := runDelete(
-				t.Context(),
-				[]string{"demo"},
-				strings.NewReader(""),
-				errorWriter{err: want},
-				func(context.Context, string, func() error) error { return tc.backendErr },
-			)
-			if !errors.Is(err, want) {
-				t.Fatalf("error = %v, want %v", err, want)
-			}
-		})
-	}
-}
-
-func TestRunDeleteInvalidArgs(t *testing.T) {
-	t.Parallel()
-	for _, tc := range nameArgCases {
-		if tc.wantErr == "" {
-			continue
+		if err != nil || out.String() != "Deletion of demo cancelled.\n" {
+			t.Fatalf("%v: error = %v, output = %q", backendErr, err, out.String())
 		}
-		t.Run(tc.name, func(t *testing.T) {
-			var out bytes.Buffer
-			err := runDelete(
-				t.Context(),
-				tc.args,
-				strings.NewReader(""),
-				&out,
-				func(context.Context, string, func() error) error {
-					t.Fatal("invalid arguments reached VM deletion")
-					return nil
-				},
-			)
-			assertErrorMessage(t, err, tc.wantErr)
-			if out.Len() != 0 {
-				t.Fatalf("invalid delete wrote to stdout: %q", out.String())
-			}
-		})
 	}
 }
 
-func TestRunDeleteOutputFailure(t *testing.T) {
-	t.Parallel()
+func TestDeleteCancellationOutputFailure(t *testing.T) {
 	want := errors.New("output unavailable")
-	err := runDelete(
-		t.Context(),
-		[]string{"demo"},
-		strings.NewReader(""),
-		errorWriter{err: want},
-		func(context.Context, string, func() error) error { return nil },
-	)
+	for _, backendErr := range []error{errDeleteCancelled, context.Canceled} {
+		err := runDelete(t.Context(), strings.NewReader(""), errorWriter{err: want}, "demo", false, func(context.Context, string, func() error) error {
+			return backendErr
+		})
+		if !errors.Is(err, want) {
+			t.Fatalf("error = %v, want %v", err, want)
+		}
+	}
+}
+
+func TestDeleteOutputFailure(t *testing.T) {
+	want := errors.New("output unavailable")
+	err := runDelete(t.Context(), strings.NewReader(""), errorWriter{err: want}, "demo", true, func(context.Context, string, func() error) error {
+		return nil
+	})
 	if !errors.Is(err, want) {
 		t.Fatalf("error = %v, want %v", err, want)
 	}
 }
 
-func TestDeleteArgumentsAndApproval(t *testing.T) {
-	for _, args := range [][]string{{"demo", "--force"}, {"--force", "demo"}, {"demo"}} {
-		opts, err := parseDeleteArgs(args)
-		if err != nil || opts.name != "demo" || opts.force != (len(args) == 2) {
-			t.Fatalf("parse %v = %+v %v", args, opts, err)
-		}
-		var out bytes.Buffer
-		called := false
-		err = runDelete(t.Context(), args, strings.NewReader("yes\n"), &out, func(_ context.Context, name string, confirm func() error) error {
+func TestDeleteRequiresTerminalOrForce(t *testing.T) {
+	for _, args := range [][]string{{"delete", "demo"}, {"delete", "--force", "demo"}, {"delete", "demo", "--force"}, {"delete", "--force=false", "demo"}} {
+		deleted := false
+		ops := unexpectedVMOperations(t)
+		ops.delete = func(_ context.Context, _ string, confirm func() error) error {
 			if confirm != nil {
 				if err := confirm(); err != nil {
 					return err
 				}
 			}
-			called = true
+			deleted = true
 			return nil
-		})
-		if opts.force {
-			if err != nil || !called {
-				t.Fatalf("force: %v %v", called, err)
-			}
-		} else if err == nil || called || !strings.Contains(err.Error(), "--force") {
-			t.Fatalf("pipe authorized destruction: %v %v", called, err)
 		}
-	}
-	for _, args := range [][]string{{"demo", "--force", "--force"}, {"--force=yes", "demo"}, {"--force=false", "demo"}, {"demo", "other"}, {"--force"}, {"", "--force"}} {
-		if _, err := parseDeleteArgs(args); err == nil {
-			t.Fatalf("malformed accepted: %v", args)
+		var out bytes.Buffer
+		err := run(args, strings.NewReader("yes\n"), &out, ops)
+		forced := strings.Contains(strings.Join(args, " "), "--force") && !strings.Contains(strings.Join(args, " "), "=false")
+		if forced && (err != nil || !deleted) {
+			t.Fatalf("%q: deleted=%t err=%v", args, deleted, err)
+		}
+		if !forced && (err == nil || deleted || !strings.Contains(err.Error(), "--force")) {
+			t.Fatalf("%q: pipe authorized destruction: deleted=%t err=%v", args, deleted, err)
 		}
 	}
 }
@@ -211,7 +128,6 @@ func TestConfirmation(t *testing.T) {
 }
 
 func TestConfirmationOutputFailureDoesNotReadApproval(t *testing.T) {
-	t.Parallel()
 	want := errors.New("prompt output unavailable")
 	const approval = "yes\n"
 	in := strings.NewReader(approval)
@@ -224,16 +140,18 @@ func TestConfirmationOutputFailureDoesNotReadApproval(t *testing.T) {
 	}
 }
 
-type failingReader struct{}
-
-func (failingReader) Read([]byte) (int, error) { return 0, errors.New("input failed") }
+func TestConfirmationRejectsReadErrorWithBytes(t *testing.T) {
+	if err := confirmDeletion(t.Context(), "demo", &approvalErrorReader{}, &bytes.Buffer{}); err == nil {
+		t.Fatal("input error accompanying newline authorized deletion")
+	}
+}
 
 func FuzzDeleteApproval(f *testing.F) {
 	for _, seed := range []string{"y\n", "YES\n", "\n", "yes", "yes\x00\n", "y\rno\n"} {
-		f.Add(seed, "demo\x00--force")
+		f.Add(seed)
 	}
-	f.Fuzz(func(t *testing.T, answer, encoded string) {
-		if len(answer) > 4096 || len(encoded) > 4096 {
+	f.Fuzz(func(t *testing.T, answer string) {
+		if len(answer) > 4096 {
 			t.Skip()
 		}
 		err := confirmDeletion(t.Context(), "demo", strings.NewReader(answer), &bytes.Buffer{})
@@ -243,22 +161,12 @@ func FuzzDeleteApproval(f *testing.F) {
 		if (err == nil) != valid {
 			t.Fatalf("ambiguous approval %q: %v", answer, err)
 		}
-		args := strings.Split(encoded, "\x00")
-		opts, err := parseDeleteArgs(args)
-		if err == nil && opts.force {
-			valid := (len(args) == 2) && ((args[0] == "--force" && args[1] == opts.name) || (args[1] == "--force" && args[0] == opts.name))
-			if !valid {
-				t.Fatalf("ambiguous force authorization: %q", args)
-			}
-		}
 	})
 }
 
-func TestConfirmationRejectsReadErrorWithBytes(t *testing.T) {
-	if err := confirmDeletion(t.Context(), "demo", &approvalErrorReader{}, &bytes.Buffer{}); err == nil {
-		t.Fatal("input error accompanying newline authorized deletion")
-	}
-}
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("input failed") }
 
 type approvalErrorReader struct{ offset int }
 

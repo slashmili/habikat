@@ -477,10 +477,10 @@ func TestStartConflictsWithLifecycleOperations(t *testing.T) {
 func TestStartRaceLaunchesOneWriter(t *testing.T) {
 	env := startFixture(t)
 	release := make(chan struct{})
-	ready := func(ctx context.Context, _ string) error {
+	ready := func(ctx context.Context, dir string) error {
 		select {
 		case <-release:
-			return nil
+			return readyNow(ctx, dir)
 		case <-ctx.Done():
 			return ctx.Err()
 		}

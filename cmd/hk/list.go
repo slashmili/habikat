@@ -9,18 +9,27 @@ import (
 	"text/tabwriter"
 
 	"github.com/slashmili/habikat/internal/vm"
+	"github.com/spf13/cobra"
 )
 
-func runList(
-	ctx context.Context,
-	args []string,
-	out io.Writer,
-	listVMs func(context.Context, bool) ([]vm.Listing, error),
-) error {
-	all, err := parseListArgs(args)
-	if err != nil {
-		return err
+type listFunc func(context.Context, bool) ([]vm.Listing, error)
+
+func newListCommand(listVMs listFunc) *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:                   "list [-a|--all]",
+		Short:                 "List active VMs for the current repository",
+		DisableFlagsInUseLine: true,
+		Args:                  rejectArguments,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runList(cmd.Context(), cmd.OutOrStdout(), all, listVMs)
+		},
 	}
+	cmd.Flags().BoolVarP(&all, "all", "a", false, "list all VMs, including stopped ones and other repositories")
+	return cmd
+}
+
+func runList(ctx context.Context, out io.Writer, all bool, listVMs listFunc) error {
 	rows, listErr := listVMs(ctx, all)
 	if listErr != nil {
 		listErr = fmt.Errorf("incomplete VM inventory: %s", terminalText(listErr.Error()))
@@ -29,19 +38,6 @@ func runList(
 		}
 	}
 	return errors.Join(listErr, renderList(out, rows))
-}
-
-func parseListArgs(args []string) (bool, error) {
-	all := false
-	for _, arg := range args {
-		switch arg {
-		case "-a", "--all":
-			all = true
-		default:
-			return false, fmt.Errorf("unexpected argument %q; usage: hk list [-a|--all]", arg)
-		}
-	}
-	return all, nil
 }
 
 func renderList(out io.Writer, rows []vm.Listing) error {

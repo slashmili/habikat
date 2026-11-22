@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,34 +11,26 @@ import (
 	"github.com/slashmili/habikat/internal/vm"
 )
 
-const usage = `usage: hk create --name NAME [--with-git-config]
-hk attach NAME
-hk fetch [--force] NAME
-hk delete [--force] NAME
-hk stop [--force] NAME
-hk start NAME
-hk list [-a|--all]
-
---with-git-config imports only user.name and user.email into the guest repository.
-hk fetch imports committed branches from a running VM without changing your checkout.
-hk fetch --force skips only confirmation for uncommitted guest files, which remain in the VM.
-Ignored files and files outside the repository are excluded.
-hk stop --force abruptly stops the VM; buffered guest data may be lost.
-hk start boots a stopped VM from its existing disk and keys.`
-
 type vmOperations struct {
-	stop   func(context.Context, string, bool) error
-	start  func(context.Context, string) (vm.StartResult, error)
-	create func(context.Context, string, vm.CreateOptions) (*vm.Project, error)
+	stop   stopFunc
+	start  startFunc
+	create createFunc
 	attach func(string) error
-	delete func(context.Context, string, func() error) error
-	fetch  func(context.Context, string, func(vm.GuestChanges) error) (*vm.FetchResult, error)
+	delete deleteFunc
+	fetch  fetchFunc
 	proxy  func(string, io.Reader, io.Writer) error
-	list   func(context.Context, bool) ([]vm.Listing, error)
+	list   listFunc
 }
 
 func main() {
-	ops := vmOperations{
+	if err := run(os.Args[1:], os.Stdin, os.Stdout, defaultVMOperations()); err != nil {
+		fmt.Fprintln(os.Stderr, "hk:", err)
+		os.Exit(1)
+	}
+}
+
+func defaultVMOperations() vmOperations {
+	return vmOperations{
 		stop:   vm.Stop,
 		start:  vm.Start,
 		create: vm.Create,
@@ -49,60 +40,23 @@ func main() {
 		proxy:  vm.Proxy,
 		list:   vm.List,
 	}
-	if err := run(
-		os.Args[1:],
-		os.Stdin,
-		os.Stdout,
-		ops,
-	); err != nil {
-		fmt.Fprintln(os.Stderr, "hk:", err)
-		os.Exit(1)
-	}
 }
 
 func run(args []string, in io.Reader, out io.Writer, ops vmOperations) error {
-	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
-		_, err := fmt.Fprintln(out, usage)
-		return err
-	}
-	if len(args) == 2 && args[0] == "_proxy" {
-		return ops.proxy(args[1], in, out)
-	}
-	if len(args) == 0 {
-		return errors.New(usage)
-	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	switch args[0] {
-	case "stop":
-		return runStop(ctx, args[1:], out, ops.stop)
-	case "start":
-		return runStart(ctx, args[1:], out, ops.start)
-	case "list":
-		return runList(ctx, args[1:], out, ops.list)
-	case "create":
-		return runCreate(
-			ctx,
-			args[1:],
-			out,
-			ops.create,
-		)
-	case "attach":
-		return runAttach(args[1:], func() {
-			cancel()
-			signal.Reset(os.Interrupt, syscall.SIGTERM)
-		}, ops.attach)
-	case "delete":
-		return runDelete(
-			ctx,
-			args[1:],
-			in,
-			out,
-			ops.delete,
-		)
-	case "fetch":
-		return runFetch(ctx, args[1:], in, out, ops.fetch)
-	default:
-		return errors.New(usage)
+	releaseSignals := func() {
+		cancel()
+		signal.Reset(os.Interrupt, syscall.SIGTERM)
 	}
+	var help helpPrinter
+	root := newRootCommand(ops, releaseSignals)
+	root.SetHelpFunc(help.print)
+	root.SetArgs(append([]string{}, args...))
+	root.SetIn(in)
+	root.SetOut(out)
+	if err := root.ExecuteContext(ctx); err != nil {
+		return err
+	}
+	return help.err
 }

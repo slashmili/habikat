@@ -9,34 +9,28 @@ import (
 	"strings"
 
 	"github.com/slashmili/habikat/internal/vm"
+	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
 
 var errFetchCancelled = errors.New("fetch cancelled")
 
-type fetchOptions struct {
-	name  string
-	force bool
-}
+type fetchFunc func(context.Context, string, func(vm.GuestChanges) error) (*vm.FetchResult, error)
 
-func parseFetchArgs(args []string) (fetchOptions, error) {
-	var opts fetchOptions
-	var names []string
-	for _, arg := range args {
-		if arg == "--force" && !opts.force {
-			opts.force = true
-			continue
-		}
-		names = append(names, arg)
+func newFetchCommand(fetchVM fetchFunc) *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:                   "fetch [--force] NAME",
+		Short:                 "Import committed branches from a running VM",
+		Long:                  "Import committed branches from a running VM without changing your checkout.\n\nhk fetch --force skips only confirmation for uncommitted guest files, which remain in the VM.\nIgnored files and files outside the repository are excluded.",
+		DisableFlagsInUseLine: true,
+		Args:                  requireVMName,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runFetch(cmd.Context(), cmd.InOrStdin(), cmd.OutOrStdout(), args[0], force, fetchVM)
+		},
 	}
-	if len(names) != 1 {
-		return fetchOptions{}, errors.New("usage: hk fetch [--force] NAME")
-	}
-	if err := vm.ValidateName(names[0]); err != nil {
-		return fetchOptions{}, err
-	}
-	opts.name = names[0]
-	return opts, nil
+	cmd.Flags().BoolVar(&force, "force", false, "fetch committed branches without confirming uncommitted guest files")
+	return cmd
 }
 
 func confirmFetch(ctx context.Context, name string, changes vm.GuestChanges, in io.Reader, out io.Writer) error {
@@ -57,30 +51,26 @@ func confirmFetch(ctx context.Context, name string, changes vm.GuestChanges, in 
 	return nil
 }
 
-func runFetch(ctx context.Context, args []string, in io.Reader, out io.Writer, fetchVM func(context.Context, string, func(vm.GuestChanges) error) (*vm.FetchResult, error)) error {
-	opts, err := parseFetchArgs(args)
-	if err != nil {
-		return err
-	}
+func runFetch(ctx context.Context, in io.Reader, out io.Writer, name string, force bool, fetchVM fetchFunc) error {
 	var confirm func(vm.GuestChanges) error
-	if !opts.force {
+	if !force {
 		confirm = func(changes vm.GuestChanges) error {
 			file, ok := in.(*os.File)
 			if !ok || !term.IsTerminal(int(file.Fd())) {
-				return fmt.Errorf("guest %s has uncommitted changes (%s); commit them in the VM or rerun hk fetch %s --force to fetch committed branches only", opts.name, changeCategories(changes), opts.name)
+				return fmt.Errorf("guest %s has uncommitted changes (%s); commit them in the VM or rerun hk fetch %s --force to fetch committed branches only", name, changeCategories(changes), name)
 			}
-			return confirmFetch(ctx, opts.name, changes, terminalReader{ctx, file}, out)
+			return confirmFetch(ctx, name, changes, terminalReader{ctx, file}, out)
 		}
 	}
-	result, err := fetchVM(ctx, opts.name, confirm)
+	result, err := fetchVM(ctx, name, confirm)
 	if err != nil {
 		if errors.Is(err, errFetchCancelled) || errors.Is(err, context.Canceled) {
-			_, writeErr := fmt.Fprintf(out, "Fetch from %s cancelled.\n", opts.name)
+			_, writeErr := fmt.Fprintf(out, "Fetch from %s cancelled.\n", name)
 			return writeErr
 		}
 		return err
 	}
-	return printFetchResult(out, opts.name, result)
+	return printFetchResult(out, name, result)
 }
 
 func changeCategories(changes vm.GuestChanges) string {

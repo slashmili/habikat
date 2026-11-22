@@ -36,10 +36,9 @@ test-cli:
 	go test -race ./cmd/hk
 
 fuzz-cli:
-	go test ./cmd/hk -run '^$$' -fuzz '^FuzzCreateArgs$$' -fuzztime=10s -parallel=2
-	go test ./cmd/hk -run '^$$' -fuzz '^FuzzNameArg$$' -fuzztime=10s -parallel=2
+	go test ./cmd/hk -run '^$$' -fuzz '^FuzzCommandLine$$' -fuzztime=10s -parallel=2
+	go test ./cmd/hk -run '^$$' -fuzz '^FuzzPrintableText$$' -fuzztime=10s -parallel=2
 	go test ./cmd/hk -run '^$$' -fuzz '^FuzzDeleteApproval$$' -fuzztime=10s -parallel=2
-	go test ./cmd/hk -run '^$$' -fuzz '^FuzzFetchArgs$$' -fuzztime=10s -parallel=2
 	go test ./cmd/hk -run '^$$' -fuzz '^FuzzFetchApproval$$' -fuzztime=10s -parallel=2
 
 test-vm:
@@ -76,15 +75,12 @@ e2e:
 	go test -race -tags=e2e ./tests/e2e -v -count=1 -timeout=10m
 
 fuzz-list:
-	go test ./cmd/hk -run '^$$' -fuzz '^FuzzListArgs$$' -fuzztime=10s -parallel=2
 	go test ./cmd/hk -run '^$$' -fuzz '^FuzzListRendering$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzListContext$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzListRecordReadOnly$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzSourceDirectoryRoundTrip$$' -fuzztime=10s -parallel=2
 
 fuzz-lifecycle:
-	go test ./cmd/hk -run '^$$' -fuzz '^FuzzStopArgs$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzStopPreservesData$$' -fuzztime=10s -parallel=2
-	go test ./cmd/hk -run '^$$' -fuzz '^FuzzStartArgs$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzStartPreservesData$$' -fuzztime=10s -parallel=2
 	go test ./internal/vm -run '^$$' -fuzz '^FuzzLaunchArtifactRecord$$' -fuzztime=10s -parallel=2

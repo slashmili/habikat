@@ -6,13 +6,25 @@ import (
 	"io"
 
 	"github.com/slashmili/habikat/internal/vm"
+	"github.com/spf13/cobra"
 )
 
-func runStart(ctx context.Context, args []string, out io.Writer, start func(context.Context, string) (vm.StartResult, error)) error {
-	name, err := parseNameArg(args)
-	if err != nil {
-		return err
+type startFunc func(context.Context, string) (vm.StartResult, error)
+
+func newStartCommand(start startFunc) *cobra.Command {
+	return &cobra.Command{
+		Use:                   "start NAME",
+		Short:                 "Boot a stopped VM",
+		Long:                  "Boot a stopped VM from its existing disk and keys.",
+		DisableFlagsInUseLine: true,
+		Args:                  requireVMName,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runStart(cmd.Context(), cmd.OutOrStdout(), args[0], start)
+		},
 	}
+}
+
+func runStart(ctx context.Context, out io.Writer, name string, start startFunc) error {
 	result, err := start(ctx, name)
 	if err != nil {
 		return err

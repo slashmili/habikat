@@ -3,51 +3,61 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"time"
 
 	"github.com/slashmili/habikat/internal/vm"
+	"github.com/spf13/cobra"
 )
 
-type createOptions struct {
-	name          string
-	withGitConfig bool
+type createFunc func(context.Context, string, vm.CreateOptions) (*vm.Project, error)
+
+func newCreateCommand(createVM createFunc) *cobra.Command {
+	var name string
+	var options vm.CreateOptions
+	cmd := &cobra.Command{
+		Use:                   "create --name NAME [--with-git-config]",
+		Short:                 "Create and boot a VM from the current directory",
+		Long:                  "Create and boot a VM from the current directory.\n\n--with-git-config imports only user.name and user.email into the guest repository.",
+		DisableFlagsInUseLine: true,
+		Args: func(cmd *cobra.Command, args []string) error {
+			return validateCreateArgs(cmd, args, name)
+		},
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runCreate(cmd.Context(), cmd.OutOrStdout(), name, options, createVM)
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "", "VM name")
+	cmd.Flags().BoolVar(&options.WithGitConfig, "with-git-config", false, "import only user.name and user.email into the guest repository")
+	return cmd
 }
 
-func runCreate(ctx context.Context, args []string, out io.Writer, createVM func(context.Context, string, vm.CreateOptions) (*vm.Project, error)) error {
-	opts, err := parseCreateArgs(args)
-	if err != nil {
+func validateCreateArgs(cmd *cobra.Command, args []string, name string) error {
+	if err := rejectArguments(cmd, args); err != nil {
 		return err
 	}
+	if name == "" {
+		return withUsage(cmd, errors.New("missing required --name"))
+	}
+	return vm.ValidateName(name)
+}
+
+func runCreate(ctx context.Context, out io.Writer, name string, options vm.CreateOptions, createVM createFunc) error {
 	ctx, stop := context.WithTimeout(ctx, 90*time.Second)
 	defer stop()
-	project, err := createVM(ctx, opts.name, vm.CreateOptions{WithGitConfig: opts.withGitConfig})
+	project, err := createVM(ctx, name, options)
 	if err != nil {
 		return err
 	}
-	if project != nil {
-		_, err = fmt.Fprintf(out, "Created %s with branch %s at %.12s in %s. Enter with: hk attach %s\n", opts.name, project.Branch, project.Commit, project.Workspace, opts.name)
-	} else {
-		_, err = fmt.Fprintf(out, "Created empty VM %s. Enter with: hk attach %s\n", opts.name, opts.name)
-	}
-	return err
+	return printCreateResult(out, name, project)
 }
 
-func parseCreateArgs(args []string) (createOptions, error) {
-	flags := flag.NewFlagSet("create", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	name := flags.String("name", "", "VM name")
-	withGitConfig := flags.Bool("with-git-config", false, "import only user.name and user.email")
-	if err := flags.Parse(args); err != nil {
-		return createOptions{}, err
+func printCreateResult(out io.Writer, name string, project *vm.Project) error {
+	if project == nil {
+		_, err := fmt.Fprintf(out, "Created empty VM %s. Enter with: hk attach %s\n", name, name)
+		return err
 	}
-	if flags.NArg() != 0 || *name == "" {
-		return createOptions{}, errors.New("usage: hk create --name NAME")
-	}
-	if err := vm.ValidateName(*name); err != nil {
-		return createOptions{}, err
-	}
-	return createOptions{name: *name, withGitConfig: *withGitConfig}, nil
+	_, err := fmt.Fprintf(out, "Created %s with branch %s at %.12s in %s. Enter with: hk attach %s\n", name, project.Branch, project.Commit, project.Workspace, name)
+	return err
 }
